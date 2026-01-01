@@ -1,0 +1,96 @@
+<idea-plugin>
+    <id>com.github.psiMcpServer</id>
+    <name>PSI MCP Server</name>
+    <vendor>Boris</vendor>
+
+    <description><![CDATA[
+        Exposes IntelliJ's refactoring capabilities via Model Context Protocol (MCP).
+
+        Features:
+        <ul>
+            <li>Rename classes, methods, variables, and files</li>
+            <li>Move classes between packages</li>
+            <li>Extract methods from code blocks</li>
+            <li>Inline methods and variables</li>
+            <li>Change method signatures</li>
+            <li>Find usages across the project</li>
+            <li>Safe delete with usage checking</li>
+        </ul>
+
+        Compatible with Claude Desktop and other MCP clients via stdio transport.
+    ]]></description>
+
+    <change-notes><![CDATA[
+        <b>1.0.0</b>
+        <ul>
+            <li>Initial release</li>
+            <li>Support for core refactoring operations</li>
+            <li>Stdio transport for Claude Desktop integration</li>
+        </ul>
+    ]]></change-notes>
+
+    <!-- Platform modules only for cross-IDE compatibility -->
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.lang</depends>
+
+    <!-- Optional: PHP support for PHPStorm -->
+    <depends optional="true" config-file="php-support.xml">com.jetbrains.php</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Application-level settings service -->
+        <applicationService
+            serviceImplementation="com.github.psiMcpServer.settings.PsiMcpSettings"/>
+
+        <!-- Project-level MCP server manager -->
+        <projectService
+            serviceImplementation="com.github.psiMcpServer.mcp.McpServerManager"/>
+
+        <!-- Settings UI in Tools section -->
+        <applicationConfigurable
+            parentId="tools"
+            instance="com.github.psiMcpServer.settings.PsiMcpSettingsConfigurable"
+            id="com.github.psiMcpServer.settings.PsiMcpSettingsConfigurable"
+            displayName="PSI MCP Server"/>
+
+        <!-- Startup activity to auto-start server if configured -->
+        <postStartupActivity
+            implementation="com.github.psiMcpServer.PsiMcpStartupActivity"/>
+
+        <!-- Tool window for server status -->
+        <toolWindow
+            id="PSI MCP"
+            anchor="bottom"
+            factoryClass="com.github.psiMcpServer.ui.McpToolWindowFactory"
+            icon="AllIcons.Toolwindows.ToolWindowMessages"/>
+
+        <!-- Notification group -->
+        <notificationGroup
+            id="PSI MCP Notifications"
+            displayType="BALLOON"/>
+    </extensions>
+
+    <actions>
+        <group id="PsiMcp.ActionGroup" text="PSI MCP" description="PSI MCP Server actions">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+
+            <action id="PsiMcp.StartServer"
+                    class="com.github.psiMcpServer.actions.StartMcpServerAction"
+                    text="Start MCP Server"
+                    description="Start the MCP server for this project"
+                    icon="AllIcons.Actions.Execute"/>
+
+            <action id="PsiMcp.StopServer"
+                    class="com.github.psiMcpServer.actions.StopMcpServerAction"
+                    text="Stop MCP Server"
+                    description="Stop the MCP server"
+                    icon="AllIcons.Actions.Suspend"/>
+
+            <separator/>
+
+            <action id="PsiMcp.ShowStatus"
+                    class="com.github.psiMcpServer.actions.ShowServerStatusAction"
+                    text="Show Server Status"
+                    description="Show MCP server status"/>
+        </group>
+    </actions>
+</idea-plugin>

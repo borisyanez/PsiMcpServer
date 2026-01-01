@@ -1,0 +1,6 @@
+<idea-plugin>
+    <!-- PHP-specific extensions for PHPStorm -->
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- PHP-specific tool implementations will be registered here -->
+    </extensions>
+</idea-plugin>
