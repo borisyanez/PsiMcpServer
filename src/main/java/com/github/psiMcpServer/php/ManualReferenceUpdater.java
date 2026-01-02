@@ -168,7 +168,7 @@ public class ManualReferenceUpdater {
                     }
 
                     // Check if this was a same-namespace reference (short name resolved to old namespace)
-                    if (refFqn.equals(oldNamespace + "\\" + refName)) {
+                    if (!oldNamespace.isEmpty() && refFqn.equals(oldNamespace + "\\" + refName)) {
                         // This class was in the old namespace - need to add a use statement
                         // because after the move, the short name won't resolve to it anymore
                         String fullClassName = oldNamespace + "\\" + refName;
@@ -178,6 +178,31 @@ public class ManualReferenceUpdater {
                             // Add use statement for the old sibling class
                             addUseStatementInternal(movedFile, fullClassName);
                             updatedCount[0]++;
+                        }
+                    }
+
+                    // Handle moving FROM global namespace to a different namespace:
+                    // References to other global namespace classes need to be prefixed with "\"
+                    if (oldNamespace.isEmpty() && !newNamespace.isEmpty()) {
+                        // Check if the reference is unqualified (short name) and resolves to global namespace
+                        String refText = classRef.getText();
+                        // Skip if already fully qualified (starts with \)
+                        if (refText != null && !refText.startsWith("\\")) {
+                            // Check if this class is in the global namespace
+                            // FQN for global namespace classes is just the class name (no leading backslash in getFQN())
+                            // or might be \ClassName
+                            String normalizedFqn = refFqn.startsWith("\\") ? refFqn.substring(1) : refFqn;
+                            boolean isGlobalNamespaceClass = !normalizedFqn.contains("\\");
+
+                            if (isGlobalNamespaceClass) {
+                                // Prefix with backslash to make it explicitly global
+                                ClassReference newRef = PhpPsiElementFactory.createClassReference(
+                                    project,
+                                    "\\" + refName
+                                );
+                                classRef.replace(newRef);
+                                updatedCount[0]++;
+                            }
                         }
                     }
 

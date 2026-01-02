@@ -39,6 +39,7 @@ An IntelliJ IDEA plugin that exposes PSI (Program Structure Interface) refactori
 - Updates class references (extends, implements, type hints) in other files
 - Supports PSR-4 namespace auto-detection from directory structure
 - Automatically adds `use` statements for classes that were in the same namespace
+- Prefixes global namespace class references with `\` when moving from global to named namespace
 
 **`batch_move_php_classes`** - Batch operations for:
 - Moving all PHP files from one directory to another
@@ -104,6 +105,31 @@ require_once __DIR__ . '/Helper.php';
 require_once __DIR__ . '/../../Models/User.php';  // ← Extra ../ added
 require_once __DIR__ . '/../Helper.php';          // ← Extra ../ added
 ```
+
+#### 5. Global Namespace References
+When moving a class from the global namespace to a named namespace, references to other global namespace classes are prefixed with `\`:
+
+```php
+// BEFORE: MyClass.php (global namespace)
+class MyClass {
+    public function foo() {
+        $logger = new GlobalLogger();    // Resolves to \GlobalLogger
+        $helper = new SomeHelper();      // Resolves to \SomeHelper
+    }
+}
+
+// AFTER: App\Services\MyClass.php (moved to namespace)
+namespace App\Services;
+
+class MyClass {
+    public function foo() {
+        $logger = new \GlobalLogger();   // ← Backslash added
+        $helper = new \SomeHelper();     // ← Backslash added
+    }
+}
+```
+
+This ensures that references to global namespace classes continue to resolve correctly after the move, since unqualified class names in a namespace would otherwise try to resolve within that namespace.
 
 ## Building
 
