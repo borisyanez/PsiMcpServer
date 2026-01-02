@@ -140,11 +140,12 @@ public class McpSocketServer {
      * Handle an incoming JSON-RPC message.
      */
     private String handleMessage(String jsonMessage) {
+        JsonNode id = null;
         try {
             JsonNode request = mapper.readTree(jsonMessage);
             String method = request.has("method") ? request.get("method").asText() : null;
             JsonNode params = request.get("params");
-            JsonNode id = request.get("id");
+            id = request.get("id");
 
             if (method == null) {
                 return createErrorResponse(id, -32600, "Invalid Request: missing method");
@@ -163,10 +164,13 @@ public class McpSocketServer {
 
         } catch (JsonProcessingException e) {
             LOG.error("JSON parse error", e);
-            return createErrorResponse(null, -32700, "Parse error: " + e.getMessage());
+            return createErrorResponse(id, -32700, "Parse error: " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            LOG.error("Method error", e);
+            return createErrorResponse(id, -32601, "Method not found: " + e.getMessage());
         } catch (Exception e) {
             LOG.error("Error handling message", e);
-            return createErrorResponse(null, -32603, "Internal error: " + e.getMessage());
+            return createErrorResponse(id, -32603, "Internal error: " + e.getMessage());
         }
     }
 
