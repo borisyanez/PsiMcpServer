@@ -10,6 +10,7 @@ An IntelliJ IDEA plugin that exposes PSI (Program Structure Interface) refactori
 - Configurable port via IDE settings
 - Works with all JetBrains IDEs (IntelliJ IDEA, PHPStorm, WebStorm, etc.)
 - Tool window showing server status, available tools, and PHP support indicator
+- Background task progress reporting in IDE status bar for long-running operations
 
 ## Available Tools
 
@@ -130,6 +131,19 @@ class MyClass {
 ```
 
 This ensures that references to global namespace classes continue to resolve correctly after the move, since unqualified class names in a namespace would otherwise try to resolve within that namespace.
+
+#### 6. Progress Reporting
+PHP class move operations display progress in the IDE status bar:
+
+**Single class move (`move_php_class`):**
+- Shows "Moving PHP Class: ClassName" as the task title
+- Reports current stage: Finding class, Collecting references, Moving file, Updating namespace, Updating internal/external references
+
+**Batch move (`batch_move_php_classes`):**
+- Shows "Moving PHP Classes" or "Moving PHP Classes: pattern" as the task title
+- Displays progress as percentage with file count (e.g., "Moving PHP classes (3/10)")
+- Shows current file name being processed
+- Supports cancellation for long-running batch operations
 
 ## Building
 
