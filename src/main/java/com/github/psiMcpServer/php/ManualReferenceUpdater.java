@@ -425,10 +425,27 @@ public class ManualReferenceUpdater {
             }
 
             if (existingNs != null) {
-                // Update existing namespace - find and replace just the namespace name
+                // Update existing namespace using text replacement approach
                 try {
-                    // Find the namespace statement (the part with the name)
-                    PhpNamespaceReference nsRef = findNamespaceReference(existingNs);
+                    // Get the current namespace name from the FQN of any class in the namespace
+                    String currentNsName = null;
+                    for (PsiElement child : existingNs.getChildren()) {
+                        if (child instanceof PhpClass) {
+                            String fqn = ((PhpClass) child).getFQN();
+                            if (fqn != null) {
+                                // Extract namespace from FQN
+                                fqn = fqn.startsWith("\\") ? fqn.substring(1) : fqn;
+                                int lastSlash = fqn.lastIndexOf('\\');
+                                if (lastSlash > 0) {
+                                    currentNsName = fqn.substring(0, lastSlash);
+                                }
+                            }
+                            break;
+                        }
+                    }
+
+                    // Find the namespace reference element (try recursive search)
+                    PhpNamespaceReference nsRef = findNamespaceReferenceRecursive(existingNs);
                     if (nsRef != null) {
                         // Create a new namespace reference with the new name
                         String code = "<?php\nnamespace " + newNamespace + ";\nclass Dummy {}";
@@ -436,14 +453,39 @@ public class ManualReferenceUpdater {
                             .createFileFromText("temp.php", file.getFileType(), code);
                         PhpNamespace tempNs = getFirstNamespace((PhpFile) tempFile);
                         if (tempNs != null) {
-                            PhpNamespaceReference newNsRef = findNamespaceReference(tempNs);
+                            PhpNamespaceReference newNsRef = findNamespaceReferenceRecursive(tempNs);
                             if (newNsRef != null) {
                                 nsRef.replace(newNsRef);
                             }
                         }
+                    } else {
+                        // Fallback: Try to find and replace text-based
+                        // Look for the statement element that contains "namespace"
+                        for (PsiElement child : existingNs.getChildren()) {
+                            if (child instanceof Statement) {
+                                String text = child.getText();
+                                if (text != null && text.startsWith("namespace ")) {
+                                    // Create replacement statement
+                                    String code = "<?php\nnamespace " + newNamespace + ";";
+                                    PsiFile tempFile = PsiFileFactory.getInstance(project)
+                                        .createFileFromText("temp.php", file.getFileType(), code);
+                                    PhpNamespace tempNs = getFirstNamespace((PhpFile) tempFile);
+                                    if (tempNs != null) {
+                                        for (PsiElement tempChild : tempNs.getChildren()) {
+                                            if (tempChild instanceof Statement) {
+                                                child.replace(tempChild);
+                                                return;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 } catch (Exception e) {
-                    // Log error but don't fail
+                    // Log error
+                    com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
+                        .error("Failed to update namespace", e);
                 }
             } else {
                 // No existing namespace - add one at the top of the file
@@ -474,10 +516,28 @@ public class ManualReferenceUpdater {
                         file.addAfter(newNs, insertPoint);
                     }
                 } catch (Exception e) {
-                    // Log error but don't fail
+                    // Log error
+                    com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
+                        .error("Failed to add namespace", e);
                 }
             }
         });
+    }
+
+    /**
+     * Recursively find the namespace reference element.
+     */
+    private PhpNamespaceReference findNamespaceReferenceRecursive(PsiElement element) {
+        if (element instanceof PhpNamespaceReference) {
+            return (PhpNamespaceReference) element;
+        }
+        for (PsiElement child : element.getChildren()) {
+            PhpNamespaceReference found = findNamespaceReferenceRecursive(child);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
     }
 
     /**
