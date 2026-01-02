@@ -81,13 +81,19 @@ public class ManualReferenceUpdater {
             );
 
             if (namespace != null) {
-                // Add after namespace declaration
+                // Add after namespace declaration or last existing use statement
                 PsiElement anchor = findLastUseStatement(namespace);
                 if (anchor != null) {
                     namespace.addAfter(newUse, anchor);
                 } else {
-                    // Add after opening brace or namespace keyword
-                    namespace.addAfter(newUse, namespace.getFirstChild());
+                    // Find the namespace statement end (semicolon or opening brace)
+                    PsiElement insertPoint = findNamespaceStatementEnd(namespace);
+                    if (insertPoint != null) {
+                        namespace.addAfter(newUse, insertPoint);
+                    } else {
+                        // Fallback: add after first child
+                        namespace.addAfter(newUse, namespace.getFirstChild());
+                    }
                 }
             } else {
                 // No namespace, add at top after <?php
@@ -236,7 +242,13 @@ public class ManualReferenceUpdater {
             if (anchor != null) {
                 namespace.addAfter(newUse, anchor);
             } else {
-                namespace.addAfter(newUse, namespace.getFirstChild());
+                // Find the namespace statement end (semicolon or opening brace)
+                PsiElement insertPoint = findNamespaceStatementEnd(namespace);
+                if (insertPoint != null) {
+                    namespace.addAfter(newUse, insertPoint);
+                } else {
+                    namespace.addAfter(newUse, namespace.getFirstChild());
+                }
             }
         } else {
             PsiElement anchor = findLastUseStatement(phpFile);
@@ -521,5 +533,31 @@ public class ManualReferenceUpdater {
             }
         }
         return last;
+    }
+
+    /**
+     * Find the end of the namespace statement (semicolon or opening brace).
+     * This is the proper insertion point for use statements when none exist.
+     */
+    private PsiElement findNamespaceStatementEnd(PhpNamespace namespace) {
+        // Look for semicolon (simple namespace) or opening brace (braced namespace)
+        for (PsiElement child : namespace.getChildren()) {
+            String text = child.getText();
+            if (";".equals(text) || "{".equals(text)) {
+                return child;
+            }
+            // Also check for the namespace reference followed by semicolon
+            if (child instanceof PhpNamespaceReference) {
+                PsiElement next = child.getNextSibling();
+                // Skip whitespace
+                while (next != null && next instanceof com.intellij.psi.PsiWhiteSpace) {
+                    next = next.getNextSibling();
+                }
+                if (next != null && ";".equals(next.getText())) {
+                    return next;
+                }
+            }
+        }
+        return null;
     }
 }
