@@ -85,6 +85,13 @@ public final class McpServerManager implements Disposable {
         return socketServer != null ? socketServer.getToolCount() : 0;
     }
 
+    /**
+     * Get the names of all registered tools.
+     */
+    public java.util.List<String> getToolNames() {
+        return socketServer != null ? socketServer.getToolNames() : java.util.List.of();
+    }
+
     public static McpServerManager getInstance(@NotNull Project project) {
         return project.getService(McpServerManager.class);
     }

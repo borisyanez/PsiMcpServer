@@ -6,9 +6,10 @@ An IntelliJ IDEA plugin that exposes PSI (Program Structure Interface) refactori
 
 - Socket-based MCP server running inside the IDE
 - Standalone proxy for Claude Desktop stdio integration
-- 7 refactoring and code navigation tools
+- 7 core refactoring and code navigation tools + 2 PHP-specific tools
 - Configurable port via IDE settings
 - Works with all JetBrains IDEs (IntelliJ IDEA, PHPStorm, WebStorm, etc.)
+- Tool window showing server status, available tools, and PHP support indicator
 
 ## Available Tools
 
@@ -175,8 +176,13 @@ Replace `YOUR_USERNAME` with your actual username.
 ### 3. Start the MCP server
 
 In your IDE:
-- Go to **Tools** → **Start MCP Server**, or
-- Use the MCP Server tool window (View → Tool Windows → MCP Server)
+- Go to **Tools** → **PSI MCP** → **Start PSI MCP Server**, or
+- Use the PSI MCP tool window (View → Tool Windows → PSI MCP)
+
+The tool window displays:
+- Server status (Running/Stopped) and port
+- PHP Support availability (for PHPStorm)
+- List of all available tools grouped by category
 
 ### 4. Restart Claude Desktop
 

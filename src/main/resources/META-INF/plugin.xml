@@ -75,22 +75,22 @@
 
             <action id="PsiMcp.StartServer"
                     class="com.github.psiMcpServer.actions.StartMcpServerAction"
-                    text="Start MCP Server"
-                    description="Start the MCP server for this project"
+                    text="Start PSI MCP Server"
+                    description="Start the PSI MCP server for this project"
                     icon="AllIcons.Actions.Execute"/>
 
             <action id="PsiMcp.StopServer"
                     class="com.github.psiMcpServer.actions.StopMcpServerAction"
-                    text="Stop MCP Server"
-                    description="Stop the MCP server"
+                    text="Stop PSI MCP Server"
+                    description="Stop the PSI MCP server"
                     icon="AllIcons.Actions.Suspend"/>
 
             <separator/>
 
             <action id="PsiMcp.ShowStatus"
                     class="com.github.psiMcpServer.actions.ShowServerStatusAction"
-                    text="Show Server Status"
-                    description="Show MCP server status"/>
+                    text="Show PSI MCP Server Status"
+                    description="Show PSI MCP server status"/>
         </group>
     </actions>
 </idea-plugin>

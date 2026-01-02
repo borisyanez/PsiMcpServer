@@ -131,4 +131,11 @@ public class ToolRegistry {
     public int getToolCount() {
         return tools.size();
     }
+
+    /**
+     * Get the names of all registered tools.
+     */
+    public java.util.List<String> getToolNames() {
+        return new java.util.ArrayList<>(tools.keySet());
+    }
 }

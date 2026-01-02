@@ -295,4 +295,8 @@ public class McpSocketServer {
     public int getToolCount() {
         return toolRegistry != null ? toolRegistry.getToolCount() : 0;
     }
+
+    public java.util.List<String> getToolNames() {
+        return toolRegistry != null ? toolRegistry.getToolNames() : java.util.List.of();
+    }
 }
