@@ -91,6 +91,19 @@ use App\Domain\Services\UserService;
 #### 3. Class References
 Extends, implements, type hints, and other class references are updated throughout the project.
 
+#### 4. Require/Include Statements
+Relative paths in `require`, `include`, `require_once`, and `include_once` statements are adjusted:
+
+```php
+// BEFORE: App\Services\UserService.php
+require_once __DIR__ . '/../Models/User.php';
+require_once __DIR__ . '/Helper.php';
+
+// AFTER: App\Domain\Services\UserService.php (moved 1 level deeper)
+require_once __DIR__ . '/../../Models/User.php';  // ← Extra ../ added
+require_once __DIR__ . '/../Helper.php';          // ← Extra ../ added
+```
+
 ## Building
 
 ### Prerequisites

@@ -104,7 +104,8 @@ public class ManualReferenceUpdater {
 
     /**
      * Update internal references inside a moved file.
-     * This handles use statements and class references that relied on the old namespace.
+     * This handles use statements, class references, and require/include statements
+     * that relied on the old file location.
      *
      * @param movedFile The PHP file that was moved
      * @param oldNamespace The original namespace before move
@@ -115,9 +116,10 @@ public class ManualReferenceUpdater {
         final int[] updatedCount = {0};
 
         WriteCommandAction.runWriteCommandAction(project, () -> {
-            // 1. Collect all use statements and check if they need updating
+            // 1. Collect all use statements, class references, and include/require statements
             java.util.List<PhpUse> useStatements = new java.util.ArrayList<>();
             java.util.List<ClassReference> classReferences = new java.util.ArrayList<>();
+            java.util.List<Include> includeStatements = new java.util.ArrayList<>();
 
             movedFile.accept(new PsiRecursiveElementVisitor() {
                 @Override
@@ -126,10 +128,19 @@ public class ManualReferenceUpdater {
                         useStatements.add((PhpUse) element);
                     } else if (element instanceof ClassReference) {
                         classReferences.add((ClassReference) element);
+                    } else if (element instanceof Include) {
+                        includeStatements.add((Include) element);
                     }
                     super.visitElement(element);
                 }
             });
+
+            // 2. Update require/include statements with relative paths
+            for (Include include : includeStatements) {
+                if (updateIncludeStatement(include, oldNamespace, newNamespace)) {
+                    updatedCount[0]++;
+                }
+            }
 
             // 2. Update use statements that were relative to old namespace
             for (PhpUse useStatement : useStatements) {
@@ -211,6 +222,136 @@ public class ManualReferenceUpdater {
                 phpFile.addAfter(newUse, openTag);
             }
         }
+    }
+
+    /**
+     * Update a require/include statement if it contains a relative path.
+     *
+     * @param include The include/require statement
+     * @param oldNamespace The old namespace (used to calculate path difference)
+     * @param newNamespace The new namespace (used to calculate path difference)
+     * @return true if the statement was updated
+     */
+    private boolean updateIncludeStatement(Include include, String oldNamespace, String newNamespace) {
+        try {
+            PsiElement argument = include.getArgument();
+            if (argument == null) return false;
+
+            String includeText = argument.getText();
+            if (includeText == null) return false;
+
+            // Check if this is a relative path that needs updating
+            // Common patterns:
+            // - __DIR__ . '/../path/file.php'
+            // - dirname(__FILE__) . '/path/file.php'
+            // - '../path/file.php'
+            // - './path/file.php'
+
+            // Calculate the directory depth difference between old and new namespace
+            int oldDepth = oldNamespace.isEmpty() ? 0 : oldNamespace.split("\\\\").length;
+            int newDepth = newNamespace.isEmpty() ? 0 : newNamespace.split("\\\\").length;
+            int depthDiff = newDepth - oldDepth;
+
+            if (depthDiff == 0) {
+                // Same depth, no change needed for relative paths
+                return false;
+            }
+
+            // Check for patterns with __DIR__ or dirname(__FILE__)
+            if (includeText.contains("__DIR__") || includeText.contains("dirname")) {
+                // Find the relative path part (e.g., '/../Models/User.php')
+                // This is complex because we need to parse the string concatenation
+
+                // Look for string literals in the expression
+                java.util.List<StringLiteralExpression> stringLiterals = new java.util.ArrayList<>();
+                argument.accept(new PsiRecursiveElementVisitor() {
+                    @Override
+                    public void visitElement(@NotNull PsiElement element) {
+                        if (element instanceof StringLiteralExpression) {
+                            stringLiterals.add((StringLiteralExpression) element);
+                        }
+                        super.visitElement(element);
+                    }
+                });
+
+                for (StringLiteralExpression literal : stringLiterals) {
+                    String path = literal.getContents();
+                    if (path != null && (path.contains("../") || path.startsWith("/"))) {
+                        String newPath = adjustRelativePath(path, depthDiff);
+                        if (!newPath.equals(path)) {
+                            // Create new string literal with updated path
+                            String quote = literal.getText().startsWith("'") ? "'" : "\"";
+                            StringLiteralExpression newLiteral = PhpPsiElementFactory.createStringLiteralExpression(
+                                project,
+                                newPath,
+                                quote.equals("'")
+                            );
+                            literal.replace(newLiteral);
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // Check for simple string literal paths like '../file.php'
+            if (argument instanceof StringLiteralExpression) {
+                StringLiteralExpression literal = (StringLiteralExpression) argument;
+                String path = literal.getContents();
+                if (path != null && path.contains("../")) {
+                    String newPath = adjustRelativePath(path, depthDiff);
+                    if (!newPath.equals(path)) {
+                        String quote = literal.getText().startsWith("'") ? "'" : "\"";
+                        StringLiteralExpression newLiteral = PhpPsiElementFactory.createStringLiteralExpression(
+                            project,
+                            newPath,
+                            quote.equals("'")
+                        );
+                        argument.replace(newLiteral);
+                        return true;
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+            // Log error but don't fail the whole operation
+        }
+        return false;
+    }
+
+    /**
+     * Adjust a relative path based on directory depth change.
+     *
+     * @param path The original relative path
+     * @param depthDiff Positive = moved deeper, negative = moved shallower
+     * @return The adjusted path
+     */
+    private String adjustRelativePath(String path, int depthDiff) {
+        if (depthDiff > 0) {
+            // Moved deeper - need more "../" to go up
+            StringBuilder prefix = new StringBuilder();
+            for (int i = 0; i < depthDiff; i++) {
+                prefix.append("../");
+            }
+            // Insert after leading / if present, or at start
+            if (path.startsWith("/")) {
+                return "/" + prefix + path.substring(1);
+            } else {
+                return prefix + path;
+            }
+        } else if (depthDiff < 0) {
+            // Moved shallower - need fewer "../"
+            int toRemove = -depthDiff;
+            String result = path;
+            for (int i = 0; i < toRemove && result.startsWith("../"); i++) {
+                result = result.substring(3); // Remove "../"
+            }
+            // If we removed all "../" and there's no leading slash, add "./"
+            if (!result.startsWith("../") && !result.startsWith("/") && !result.startsWith("./")) {
+                result = "./" + result;
+            }
+            return result;
+        }
+        return path;
     }
 
     /**
