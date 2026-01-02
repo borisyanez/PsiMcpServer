@@ -46,6 +46,51 @@ An IntelliJ IDEA plugin that exposes PSI (Program Structure Interface) refactori
 - Preserving directory structure during moves
 - Bulk namespace and reference updates
 
+### How PHP Class Moving Works
+
+When you move a PHP class, the plugin performs a complete refactoring:
+
+#### 1. Internal References (inside the moved file)
+Classes that were in the same namespace and referenced by short name get proper `use` statements added:
+
+```php
+// BEFORE: App\Services\UserService.php
+namespace App\Services;
+
+class UserService {
+    public function __construct(
+        private Helper $helper,           // Same namespace - no use needed
+        private \App\Models\User $user    // FQN - stays the same
+    ) {}
+}
+
+// AFTER: App\Domain\Services\UserService.php
+namespace App\Domain\Services;
+
+use App\Services\Helper;                  // ← Auto-added!
+
+class UserService {
+    public function __construct(
+        private Helper $helper,           // Now resolved via use statement
+        private \App\Models\User $user    // FQN - unchanged
+    ) {}
+}
+```
+
+#### 2. External References (other files)
+All files that reference the moved class are updated:
+
+```php
+// BEFORE: Some other file
+use App\Services\UserService;
+
+// AFTER: Automatically updated
+use App\Domain\Services\UserService;
+```
+
+#### 3. Class References
+Extends, implements, type hints, and other class references are updated throughout the project.
+
 ## Building
 
 ### Prerequisites
@@ -182,7 +227,14 @@ PsiMcpServer/
 │   │   ├── BaseTool.java
 │   │   ├── RenameElementTool.java
 │   │   ├── MoveElementTool.java
+│   │   ├── MovePhpClassTool.java
+│   │   ├── BatchMovePhpClassesTool.java
 │   │   └── ...
+│   ├── php/                 # PHP-specific handlers (PHPStorm)
+│   │   ├── PhpMoveHandler.java
+│   │   ├── PhpBatchMoveHandler.java
+│   │   ├── ManualReferenceUpdater.java
+│   │   └── PhpPluginHelper.java
 │   ├── psi/                 # PSI utilities
 │   │   ├── PsiElementResolver.java
 │   │   └── RefactoringExecutor.java
