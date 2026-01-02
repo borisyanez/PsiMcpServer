@@ -65,6 +65,9 @@ public class PhpMoveHandler {
         String oldFqn = phpClass.getFQN();
         String className = phpClass.getName();
 
+        // Extract old namespace from FQN
+        String oldNamespace = extractNamespace(oldFqn);
+
         // Determine new namespace from target directory if not provided
         if (newNamespace == null) {
             newNamespace = detectNamespaceFromDirectory(targetDirectory);
@@ -82,13 +85,24 @@ public class PhpMoveHandler {
                 return MoveResult.failure("Failed to move file to target directory");
             }
 
+            int updatedCount = 0;
+
             // 2. Update namespace declaration in the moved file
             if (movedFile instanceof PhpFile movedPhpFile) {
                 updateNamespace(movedPhpFile, newNamespace);
+
+                // 3. Update internal references inside the moved file
+                // (use statements and class references that relied on old namespace)
+                int internalUpdates = referenceUpdater.updateInternalReferences(
+                    movedPhpFile,
+                    oldNamespace,
+                    newNamespace
+                );
+                updatedCount += internalUpdates;
             }
 
-            // 3. Update all references
-            int updatedCount = updateReferences(references, oldFqn, newFqn);
+            // 4. Update all external references (other files referencing this class)
+            updatedCount += updateReferences(references, oldFqn, newFqn);
 
             return MoveResult.success(
                 "Moved " + className + " to " + newNamespace,
@@ -99,6 +113,19 @@ public class PhpMoveHandler {
         } catch (Exception e) {
             return MoveResult.failure("Move failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * Extract namespace from a fully qualified name.
+     */
+    private String extractNamespace(String fqn) {
+        if (fqn == null) return "";
+        // Remove leading backslash if present
+        if (fqn.startsWith("\\")) {
+            fqn = fqn.substring(1);
+        }
+        int lastSlash = fqn.lastIndexOf('\\');
+        return lastSlash >= 0 ? fqn.substring(0, lastSlash) : "";
     }
 
     /**

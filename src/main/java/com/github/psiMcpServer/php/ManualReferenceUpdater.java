@@ -103,6 +103,137 @@ public class ManualReferenceUpdater {
     }
 
     /**
+     * Update internal references inside a moved file.
+     * This handles use statements and class references that relied on the old namespace.
+     *
+     * @param movedFile The PHP file that was moved
+     * @param oldNamespace The original namespace before move
+     * @param newNamespace The new namespace after move
+     * @return Number of references updated
+     */
+    public int updateInternalReferences(PhpFile movedFile, String oldNamespace, String newNamespace) {
+        final int[] updatedCount = {0};
+
+        WriteCommandAction.runWriteCommandAction(project, () -> {
+            // 1. Collect all use statements and check if they need updating
+            java.util.List<PhpUse> useStatements = new java.util.ArrayList<>();
+            java.util.List<ClassReference> classReferences = new java.util.ArrayList<>();
+
+            movedFile.accept(new PsiRecursiveElementVisitor() {
+                @Override
+                public void visitElement(@NotNull PsiElement element) {
+                    if (element instanceof PhpUse) {
+                        useStatements.add((PhpUse) element);
+                    } else if (element instanceof ClassReference) {
+                        classReferences.add((ClassReference) element);
+                    }
+                    super.visitElement(element);
+                }
+            });
+
+            // 2. Update use statements that were relative to old namespace
+            for (PhpUse useStatement : useStatements) {
+                String useFqn = useStatement.getFQN();
+                if (useFqn != null) {
+                    // Check if this use statement was importing from the old namespace (sibling classes)
+                    if (useFqn.startsWith(oldNamespace + "\\")) {
+                        // This was a sibling class - it stays the same (absolute FQN)
+                        // No change needed
+                    }
+                    // Check for relative imports that might have been resolved against old namespace
+                    // These would already be stored as FQN, so they should be fine
+                }
+            }
+
+            // 3. Check for unqualified class references that relied on same-namespace resolution
+            for (ClassReference classRef : classReferences) {
+                String refName = classRef.getName();
+                String refFqn = classRef.getFQN();
+
+                if (refName != null && refFqn != null) {
+                    // Skip if it's a built-in or already has a use statement
+                    if (isBuiltInClass(refName)) {
+                        continue;
+                    }
+
+                    // Check if this was a same-namespace reference (short name resolved to old namespace)
+                    if (refFqn.equals(oldNamespace + "\\" + refName)) {
+                        // This class was in the old namespace - need to add a use statement
+                        // because after the move, the short name won't resolve to it anymore
+                        String fullClassName = oldNamespace + "\\" + refName;
+
+                        // Check if we already have a use statement for this
+                        if (!hasUseStatementFor(movedFile, fullClassName)) {
+                            // Add use statement for the old sibling class
+                            addUseStatementInternal(movedFile, fullClassName);
+                            updatedCount[0]++;
+                        }
+                    }
+
+                    // Check if the reference is to a class in the NEW namespace
+                    // (i.e., a class that was also moved to the same location)
+                    // In this case, no use statement is needed
+                }
+            }
+        });
+
+        return updatedCount[0];
+    }
+
+    /**
+     * Internal method to add use statement during a write action.
+     */
+    private void addUseStatementInternal(PhpFile phpFile, String fqn) {
+        // Check if use already exists
+        if (hasUseStatementFor(phpFile, fqn)) return;
+
+        PhpNamespace namespace = getFirstNamespace(phpFile);
+
+        PhpUseList newUse = PhpPsiElementFactory.createUseStatement(
+            project,
+            fqn,
+            null
+        );
+
+        if (namespace != null) {
+            PsiElement anchor = findLastUseStatement(namespace);
+            if (anchor != null) {
+                namespace.addAfter(newUse, anchor);
+            } else {
+                namespace.addAfter(newUse, namespace.getFirstChild());
+            }
+        } else {
+            PsiElement anchor = findLastUseStatement(phpFile);
+            if (anchor != null) {
+                phpFile.addAfter(newUse, anchor);
+            } else {
+                PsiElement openTag = phpFile.getFirstChild();
+                phpFile.addAfter(newUse, openTag);
+            }
+        }
+    }
+
+    /**
+     * Check if a class name is a PHP built-in class.
+     */
+    private boolean isBuiltInClass(String className) {
+        // Common PHP built-in classes that shouldn't have use statements added
+        java.util.Set<String> builtIns = java.util.Set.of(
+            "Exception", "Error", "Throwable", "RuntimeException",
+            "InvalidArgumentException", "LogicException", "OutOfBoundsException",
+            "DateTime", "DateTimeImmutable", "DateTimeInterface", "DateInterval", "DateTimeZone",
+            "stdClass", "ArrayObject", "ArrayIterator", "Iterator", "IteratorAggregate",
+            "Countable", "Serializable", "JsonSerializable", "Stringable",
+            "Closure", "Generator", "WeakReference", "WeakMap",
+            "PDO", "PDOStatement", "PDOException",
+            "ReflectionClass", "ReflectionMethod", "ReflectionProperty", "ReflectionException",
+            "SplFileInfo", "SplFileObject", "DirectoryIterator", "RecursiveDirectoryIterator",
+            "self", "static", "parent"
+        );
+        return builtIns.contains(className);
+    }
+
+    /**
      * Update namespace declaration in a file
      */
     public void updateNamespaceDeclaration(PhpFile file, String newNamespace) {

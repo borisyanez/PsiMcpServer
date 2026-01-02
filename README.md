@@ -33,9 +33,11 @@ An IntelliJ IDEA plugin that exposes PSI (Program Structure Interface) refactori
 
 **`move_php_class`** - Single class move with:
 - Updates the namespace declaration in the moved file
-- Updates all `use` statements across the project
-- Updates class references (extends, implements, type hints)
+- Updates `use` statements and class references **inside** the moved file (for sibling class references)
+- Updates all `use` statements across the project (external references)
+- Updates class references (extends, implements, type hints) in other files
 - Supports PSR-4 namespace auto-detection from directory structure
+- Automatically adds `use` statements for classes that were in the same namespace
 
 **`batch_move_php_classes`** - Batch operations for:
 - Moving all PHP files from one directory to another
