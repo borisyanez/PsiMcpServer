@@ -406,30 +406,78 @@ public class ManualReferenceUpdater {
         WriteCommandAction.runWriteCommandAction(project, () -> {
             PhpNamespace existingNs = getFirstNamespace(file);
 
-            if (existingNs != null && newNamespace != null && !newNamespace.isEmpty()) {
-                // Find and update the namespace name element
-                // The namespace structure is: namespace Name\Space;
-                // We need to create a new namespace statement and replace the old one
+            if (newNamespace == null || newNamespace.isEmpty()) {
+                // Moving to global namespace - remove existing namespace if present
+                // This is a complex case that would require restructuring the file
+                return;
+            }
+
+            if (existingNs != null) {
+                // Update existing namespace - find and replace just the namespace name
                 try {
-                    String code = "<?php\nnamespace " + newNamespace + ";";
+                    // Find the namespace statement (the part with the name)
+                    PhpNamespaceReference nsRef = findNamespaceReference(existingNs);
+                    if (nsRef != null) {
+                        // Create a new namespace reference with the new name
+                        String code = "<?php\nnamespace " + newNamespace + ";\nclass Dummy {}";
+                        PsiFile tempFile = PsiFileFactory.getInstance(project)
+                            .createFileFromText("temp.php", file.getFileType(), code);
+                        PhpNamespace tempNs = getFirstNamespace((PhpFile) tempFile);
+                        if (tempNs != null) {
+                            PhpNamespaceReference newNsRef = findNamespaceReference(tempNs);
+                            if (newNsRef != null) {
+                                nsRef.replace(newNsRef);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    // Log error but don't fail
+                }
+            } else {
+                // No existing namespace - add one at the top of the file
+                try {
+                    // Find the opening PHP tag
+                    PsiElement firstChild = file.getFirstChild();
+                    if (firstChild == null) return;
+
+                    // Create namespace statement
+                    String code = "<?php\nnamespace " + newNamespace + ";\n";
                     PsiFile tempFile = PsiFileFactory.getInstance(project)
                         .createFileFromText("temp.php", file.getFileType(), code);
 
+                    // Get the namespace element from temp file
                     PhpNamespace newNs = getFirstNamespace((PhpFile) tempFile);
                     if (newNs != null) {
-                        // Copy content from old namespace to new
-                        for (PsiElement child : existingNs.getChildren()) {
-                            if (!(child instanceof com.intellij.psi.PsiWhiteSpace)) {
-                                // Skip the namespace keyword and name, copy the rest
-                            }
+                        // Find where to insert (after <?php tag)
+                        PsiElement insertPoint = firstChild;
+
+                        // Skip whitespace after opening tag
+                        PsiElement next = insertPoint.getNextSibling();
+                        while (next instanceof com.intellij.psi.PsiWhiteSpace) {
+                            insertPoint = next;
+                            next = next.getNextSibling();
                         }
-                        existingNs.replace(newNs);
+
+                        // Add namespace after the insertion point
+                        file.addAfter(newNs, insertPoint);
                     }
                 } catch (Exception e) {
-                    // Fallback: just log the error
+                    // Log error but don't fail
                 }
             }
         });
+    }
+
+    /**
+     * Find the namespace reference (name) element within a namespace declaration.
+     */
+    private PhpNamespaceReference findNamespaceReference(PhpNamespace namespace) {
+        for (PsiElement child : namespace.getChildren()) {
+            if (child instanceof PhpNamespaceReference) {
+                return (PhpNamespaceReference) child;
+            }
+        }
+        return null;
     }
 
     // Helper methods
