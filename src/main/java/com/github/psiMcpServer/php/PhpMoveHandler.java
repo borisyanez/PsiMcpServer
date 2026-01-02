@@ -2,6 +2,7 @@ package com.github.psiMcpServer.php;
 
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.command.WriteCommandAction;
+import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -52,11 +53,25 @@ public class PhpMoveHandler {
      * @return Result of the move operation
      */
     public MoveResult movePhpClass(PsiFile sourceFile, PsiDirectory targetDirectory, String newNamespace) {
+        return movePhpClass(sourceFile, targetDirectory, newNamespace, null);
+    }
+
+    /**
+     * Move a PHP class to a new namespace/directory with progress reporting.
+     *
+     * @param sourceFile      The PHP file containing the class
+     * @param targetDirectory The target directory
+     * @param newNamespace    The new namespace for the class (can be null to auto-detect)
+     * @param indicator       Optional progress indicator for reporting status
+     * @return Result of the move operation
+     */
+    public MoveResult movePhpClass(PsiFile sourceFile, PsiDirectory targetDirectory, String newNamespace, ProgressIndicator indicator) {
         if (!(sourceFile instanceof PhpFile phpFile)) {
             return MoveResult.failure("Source file is not a PHP file");
         }
 
-        // Find the main class in the file
+        // Stage 1: Find the main class
+        reportProgress(indicator, "Finding main class...", sourceFile.getName());
         PhpClass phpClass = findMainClass(phpFile);
         if (phpClass == null) {
             return MoveResult.failure("No PHP class found in the file");
@@ -75,11 +90,13 @@ public class PhpMoveHandler {
 
         String newFqn = newNamespace.isEmpty() ? className : newNamespace + "\\" + className;
 
-        // Collect all references before the move
+        // Stage 2: Collect all references before the move
+        reportProgress(indicator, "Collecting references...", className);
         List<PsiReference> references = collectReferences(phpClass);
 
         try {
-            // 1. Move the file physically
+            // Stage 3: Move the file physically
+            reportProgress(indicator, "Moving file...", className);
             PsiFile movedFile = moveFile(phpFile, targetDirectory);
             if (movedFile == null) {
                 return MoveResult.failure("Failed to move file to target directory");
@@ -87,12 +104,13 @@ public class PhpMoveHandler {
 
             int updatedCount = 0;
 
-            // 2. Update namespace declaration in the moved file
+            // Stage 4: Update namespace declaration in the moved file
             if (movedFile instanceof PhpFile movedPhpFile) {
+                reportProgress(indicator, "Updating namespace...", className);
                 updateNamespace(movedPhpFile, newNamespace);
 
-                // 3. Update internal references inside the moved file
-                // (use statements and class references that relied on old namespace)
+                // Stage 5: Update internal references inside the moved file
+                reportProgress(indicator, "Updating internal references...", className);
                 int internalUpdates = referenceUpdater.updateInternalReferences(
                     movedPhpFile,
                     oldNamespace,
@@ -101,7 +119,8 @@ public class PhpMoveHandler {
                 updatedCount += internalUpdates;
             }
 
-            // 4. Update all external references (other files referencing this class)
+            // Stage 6: Update all external references (other files referencing this class)
+            reportProgress(indicator, "Updating external references...", className);
             updatedCount += updateReferences(references, oldFqn, newFqn);
 
             return MoveResult.success(
@@ -112,6 +131,16 @@ public class PhpMoveHandler {
 
         } catch (Exception e) {
             return MoveResult.failure("Move failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Report progress to the indicator if available.
+     */
+    private void reportProgress(ProgressIndicator indicator, String stage, String className) {
+        if (indicator != null) {
+            indicator.setText("Moving PHP class: " + className);
+            indicator.setText2(stage);
         }
     }
 

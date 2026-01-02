@@ -5,10 +5,15 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.psiMcpServer.php.PhpBatchMoveHandler;
 import com.github.psiMcpServer.psi.PsiElementResolver;
+import com.intellij.openapi.progress.ProgressIndicator;
+import com.intellij.openapi.progress.ProgressManager;
+import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.PsiDirectory;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Tool for batch moving PHP classes to a different namespace/directory.
@@ -115,24 +120,58 @@ public class BatchMovePhpClassesTool extends BaseTool {
                 return error("Source and target directories are the same");
             }
 
-            // Perform the batch move
-            PhpBatchMoveHandler.BatchMoveResult result;
+            // Build task title
+            String taskTitle = pattern != null && !pattern.isEmpty()
+                ? "Moving PHP Classes: " + pattern
+                : "Moving PHP Classes";
 
-            if (pattern != null && !pattern.isEmpty()) {
-                result = batchHandler.moveByPattern(
-                    sourceDir,
-                    pattern,
-                    targetDir,
-                    newNamespace,
-                    recursive
-                );
-            } else {
-                result = batchHandler.moveDirectory(
-                    sourceDir,
-                    targetDir,
-                    newNamespace,
-                    recursive
-                );
+            // Perform the batch move with progress reporting
+            AtomicReference<PhpBatchMoveHandler.BatchMoveResult> resultRef = new AtomicReference<>();
+            AtomicReference<Exception> exceptionRef = new AtomicReference<>();
+
+            final String finalPattern = pattern;
+            final String finalNewNamespace = newNamespace;
+
+            ProgressManager.getInstance().run(new Task.WithResult<Void, RuntimeException>(project, taskTitle, true) {
+                @Override
+                protected Void compute(@NotNull ProgressIndicator indicator) {
+                    try {
+                        PhpBatchMoveHandler.BatchMoveResult result;
+
+                        if (finalPattern != null && !finalPattern.isEmpty()) {
+                            result = batchHandler.moveByPattern(
+                                sourceDir,
+                                finalPattern,
+                                targetDir,
+                                finalNewNamespace,
+                                recursive,
+                                indicator
+                            );
+                        } else {
+                            result = batchHandler.moveDirectory(
+                                sourceDir,
+                                targetDir,
+                                finalNewNamespace,
+                                recursive,
+                                indicator
+                            );
+                        }
+                        resultRef.set(result);
+                    } catch (Exception e) {
+                        exceptionRef.set(e);
+                    }
+                    return null;
+                }
+            });
+
+            // Check for exceptions
+            if (exceptionRef.get() != null) {
+                return error("Batch move failed: " + exceptionRef.get().getMessage());
+            }
+
+            PhpBatchMoveHandler.BatchMoveResult result = resultRef.get();
+            if (result == null) {
+                return error("Batch move failed: no result returned");
             }
 
             if (result.success()) {

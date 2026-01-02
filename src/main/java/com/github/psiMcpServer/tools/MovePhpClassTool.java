@@ -4,11 +4,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.psiMcpServer.php.PhpMoveHandler;
 import com.github.psiMcpServer.psi.PsiElementResolver;
+import com.intellij.openapi.progress.ProgressIndicator;
+import com.intellij.openapi.progress.ProgressManager;
+import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.PsiDirectory;
 import com.intellij.psi.PsiFile;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Tool for moving PHP classes to a different namespace/directory.
@@ -99,12 +104,42 @@ public class MovePhpClassTool extends BaseTool {
                 return error("Source file is already in the target directory");
             }
 
-            // Perform the PHP class move
-            PhpMoveHandler.MoveResult result = phpMoveHandler.movePhpClass(
-                sourceFile,
-                targetDir,
-                newNamespace
-            );
+            // Extract class name for the task title
+            String fileName = sourceFile.getName();
+            String className = fileName.endsWith(".php") ? fileName.substring(0, fileName.length() - 4) : fileName;
+
+            // Perform the PHP class move with progress reporting
+            AtomicReference<PhpMoveHandler.MoveResult> resultRef = new AtomicReference<>();
+            AtomicReference<Exception> exceptionRef = new AtomicReference<>();
+
+            ProgressManager.getInstance().run(new Task.WithResult<Void, RuntimeException>(project, "Moving PHP Class: " + className, false) {
+                @Override
+                protected Void compute(@NotNull ProgressIndicator indicator) {
+                    try {
+                        indicator.setIndeterminate(false);
+                        PhpMoveHandler.MoveResult result = phpMoveHandler.movePhpClass(
+                            sourceFile,
+                            targetDir,
+                            newNamespace,
+                            indicator
+                        );
+                        resultRef.set(result);
+                    } catch (Exception e) {
+                        exceptionRef.set(e);
+                    }
+                    return null;
+                }
+            });
+
+            // Check for exceptions
+            if (exceptionRef.get() != null) {
+                return error("PHP class move failed: " + exceptionRef.get().getMessage());
+            }
+
+            PhpMoveHandler.MoveResult result = resultRef.get();
+            if (result == null) {
+                return error("PHP class move failed: no result returned");
+            }
 
             if (result.success()) {
                 ObjectNode response = MAPPER.createObjectNode();

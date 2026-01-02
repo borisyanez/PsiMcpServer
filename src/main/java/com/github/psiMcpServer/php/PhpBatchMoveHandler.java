@@ -1,6 +1,7 @@
 package com.github.psiMcpServer.php;
 
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -81,13 +82,38 @@ public class PhpBatchMoveHandler {
         String newNamespaceBase,
         boolean recursive
     ) {
+        return moveDirectory(sourceDirectory, targetDirectory, newNamespaceBase, recursive, null);
+    }
+
+    /**
+     * Move all PHP files from a source directory to a target directory with progress reporting.
+     *
+     * @param sourceDirectory The source directory containing PHP files
+     * @param targetDirectory The target directory
+     * @param newNamespaceBase The base namespace for moved classes (null for auto-detect)
+     * @param recursive Whether to include subdirectories
+     * @param indicator Optional progress indicator for reporting status
+     * @return Result of the batch operation
+     */
+    public BatchMoveResult moveDirectory(
+        PsiDirectory sourceDirectory,
+        PsiDirectory targetDirectory,
+        String newNamespaceBase,
+        boolean recursive,
+        ProgressIndicator indicator
+    ) {
+        if (indicator != null) {
+            indicator.setText("Scanning for PHP files...");
+            indicator.setIndeterminate(true);
+        }
+
         List<PsiFile> phpFiles = collectPhpFiles(sourceDirectory, recursive);
 
         if (phpFiles.isEmpty()) {
             return BatchMoveResult.failure("No PHP files found in source directory");
         }
 
-        return moveFiles(phpFiles, sourceDirectory, targetDirectory, newNamespaceBase, recursive);
+        return moveFiles(phpFiles, sourceDirectory, targetDirectory, newNamespaceBase, recursive, indicator);
     }
 
     /**
@@ -107,6 +133,33 @@ public class PhpBatchMoveHandler {
         String newNamespaceBase,
         boolean recursive
     ) {
+        return moveByPattern(sourceDirectory, pattern, targetDirectory, newNamespaceBase, recursive, null);
+    }
+
+    /**
+     * Move PHP files matching a glob pattern with progress reporting.
+     *
+     * @param sourceDirectory The source directory to search
+     * @param pattern Glob pattern (e.g., "*Controller.php", "Service*.php")
+     * @param targetDirectory The target directory
+     * @param newNamespaceBase The base namespace for moved classes
+     * @param recursive Whether to search subdirectories
+     * @param indicator Optional progress indicator for reporting status
+     * @return Result of the batch operation
+     */
+    public BatchMoveResult moveByPattern(
+        PsiDirectory sourceDirectory,
+        String pattern,
+        PsiDirectory targetDirectory,
+        String newNamespaceBase,
+        boolean recursive,
+        ProgressIndicator indicator
+    ) {
+        if (indicator != null) {
+            indicator.setText("Scanning for PHP files matching: " + pattern);
+            indicator.setIndeterminate(true);
+        }
+
         Pattern regex = globToRegex(pattern);
         List<PsiFile> matchingFiles = collectPhpFilesByPattern(sourceDirectory, regex, recursive);
 
@@ -114,7 +167,7 @@ public class PhpBatchMoveHandler {
             return BatchMoveResult.failure("No PHP files matching pattern '" + pattern + "' found");
         }
 
-        return moveFiles(matchingFiles, sourceDirectory, targetDirectory, newNamespaceBase, recursive);
+        return moveFiles(matchingFiles, sourceDirectory, targetDirectory, newNamespaceBase, recursive, indicator);
     }
 
     /**
@@ -132,10 +185,53 @@ public class PhpBatchMoveHandler {
         String newNamespaceBase,
         boolean preserveStructure
     ) {
+        return moveFiles(files, sourceDirectory, targetDirectory, newNamespaceBase, preserveStructure, null);
+    }
+
+    /**
+     * Move a specific list of PHP files with progress reporting.
+     *
+     * @param files List of PHP files to move
+     * @param sourceDirectory The source directory (for structure preservation)
+     * @param targetDirectory The target directory
+     * @param newNamespaceBase The base namespace for moved classes
+     * @param preserveStructure Whether to preserve directory structure
+     * @param indicator Optional progress indicator for reporting status
+     * @return Result of the batch operation
+     */
+    public BatchMoveResult moveFiles(
+        List<PsiFile> files,
+        PsiDirectory sourceDirectory,
+        PsiDirectory targetDirectory,
+        String newNamespaceBase,
+        boolean preserveStructure,
+        ProgressIndicator indicator
+    ) {
         List<FileMoveResult> results = new ArrayList<>();
         int movedCount = 0;
+        int totalFiles = files.size();
 
-        for (PsiFile file : files) {
+        if (indicator != null) {
+            indicator.setIndeterminate(false);
+            indicator.setText("Moving PHP classes...");
+            indicator.setFraction(0.0);
+        }
+
+        for (int i = 0; i < files.size(); i++) {
+            PsiFile file = files.get(i);
+
+            // Update progress
+            if (indicator != null) {
+                indicator.setFraction((double) i / totalFiles);
+                indicator.setText("Moving PHP classes (" + (i + 1) + "/" + totalFiles + ")");
+                indicator.setText2(file.getName());
+
+                // Check for cancellation
+                if (indicator.isCanceled()) {
+                    return BatchMoveResult.success(i, movedCount, results);
+                }
+            }
+
             if (!(file instanceof PhpFile)) {
                 results.add(new FileMoveResult(
                     getFilePath(file),
@@ -167,7 +263,8 @@ public class PhpBatchMoveHandler {
                 PhpMoveHandler.MoveResult moveResult = singleMoveHandler.movePhpClass(
                     file,
                     actualTarget,
-                    namespace
+                    namespace,
+                    indicator
                 );
 
                 if (moveResult.success()) {
@@ -200,6 +297,11 @@ public class PhpBatchMoveHandler {
                     0
                 ));
             }
+        }
+
+        if (indicator != null) {
+            indicator.setFraction(1.0);
+            indicator.setText("Batch move completed");
         }
 
         return BatchMoveResult.success(files.size(), movedCount, results);
