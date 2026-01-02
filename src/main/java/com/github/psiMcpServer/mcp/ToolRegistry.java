@@ -57,6 +57,7 @@ public class ToolRegistry {
         if (PhpPluginHelper.isPhpPluginAvailable()) {
             try {
                 register(new MovePhpClassTool(project));
+                register(new BatchMovePhpClassesTool(project));
                 LOG.info("PHP plugin detected - registered PHP-specific tools");
             } catch (Exception e) {
                 LOG.warn("Failed to register PHP tools: " + e.getMessage());

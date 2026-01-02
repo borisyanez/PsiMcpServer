@@ -29,12 +29,20 @@ An IntelliJ IDEA plugin that exposes PSI (Program Structure Interface) refactori
 | Tool | Description |
 |------|-------------|
 | `move_php_class` | Move a PHP class to a new namespace/directory with full reference updates |
+| `batch_move_php_classes` | Move multiple PHP classes at once (entire directories or by pattern) |
 
-The `move_php_class` tool provides enhanced PHP class moving capabilities:
+**`move_php_class`** - Single class move with:
 - Updates the namespace declaration in the moved file
 - Updates all `use` statements across the project
 - Updates class references (extends, implements, type hints)
 - Supports PSR-4 namespace auto-detection from directory structure
+
+**`batch_move_php_classes`** - Batch operations for:
+- Moving all PHP files from one directory to another
+- Moving files matching a glob pattern (e.g., `*Controller.php`, `Service*.php`)
+- Recursive subdirectory processing
+- Preserving directory structure during moves
+- Bulk namespace and reference updates
 
 ## Building
 
@@ -128,6 +136,9 @@ Once connected, you can ask Claude to:
 
 - "Move the `UserController` class to the `App\Http\Controllers\Api` namespace"
 - "Refactor `Services/PaymentService.php` to `Services/Payment/StripeService.php`"
+- "Move all controllers from `app/Http/Controllers` to `app/Http/Controllers/V2`"
+- "Move all `*Repository.php` files to the `Repositories` folder"
+- "Batch move all services matching `*Service.php` to the new `Domain/Services` namespace"
 
 ## Testing
 
