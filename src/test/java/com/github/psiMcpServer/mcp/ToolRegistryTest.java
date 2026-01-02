@@ -29,13 +29,15 @@ public class ToolRegistryTest {
 
     @Test
     public void testToolCount() {
-        // Should have 7 tools registered
-        assertThat(registry.getToolCount()).isEqualTo(7);
+        // Should have at least 7 base tools registered
+        // May have 8 if PHP plugin is available (adds move_php_class)
+        assertThat(registry.getToolCount()).isGreaterThanOrEqualTo(7);
     }
 
     @Test
     public void testHasToolForAllRegisteredTools() {
-        String[] expectedTools = {
+        // Base tools that are always registered
+        String[] baseTools = {
             "rename_element",
             "move_element",
             "safe_delete",
@@ -45,7 +47,7 @@ public class ToolRegistryTest {
             "get_element_info"
         };
 
-        for (String toolName : expectedTools) {
+        for (String toolName : baseTools) {
             assertThat(registry.hasTool(toolName))
                 .as("Tool '%s' should be registered", toolName)
                 .isTrue();
@@ -63,7 +65,8 @@ public class ToolRegistryTest {
     public void testGetToolSpecs() {
         ArrayNode specs = registry.getToolSpecs();
 
-        assertThat(specs.size()).isEqualTo(7);
+        // At least 7 base tools, may have more if PHP plugin is available
+        assertThat(specs.size()).isGreaterThanOrEqualTo(7);
 
         // Each tool spec should have name, description, and inputSchema
         for (JsonNode spec : specs) {
@@ -84,7 +87,8 @@ public class ToolRegistryTest {
             toolNames.add(spec.get("name").asText());
         }
 
-        assertThat(toolNames).containsExactlyInAnyOrder(
+        // Base tools that should always be present
+        String[] baseTools = {
             "rename_element",
             "move_element",
             "safe_delete",
@@ -92,7 +96,13 @@ public class ToolRegistryTest {
             "list_project_files",
             "get_file_contents",
             "get_element_info"
-        );
+        };
+
+        for (String toolName : baseTools) {
+            assertThat(toolNames)
+                .as("Should contain tool '%s'", toolName)
+                .contains(toolName);
+        }
     }
 
     @Test

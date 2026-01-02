@@ -12,6 +12,8 @@ An IntelliJ IDEA plugin that exposes PSI (Program Structure Interface) refactori
 
 ## Available Tools
 
+### Core Tools (All IDEs)
+
 | Tool | Description |
 |------|-------------|
 | `rename_element` | Rename classes, methods, variables, or files |
@@ -21,6 +23,18 @@ An IntelliJ IDEA plugin that exposes PSI (Program Structure Interface) refactori
 | `list_project_files` | List project files with glob pattern filtering |
 | `get_file_contents` | Read file contents with optional line range |
 | `get_element_info` | Get PSI element metadata (type, modifiers, etc.) |
+
+### PHP-Specific Tools (PHPStorm only)
+
+| Tool | Description |
+|------|-------------|
+| `move_php_class` | Move a PHP class to a new namespace/directory with full reference updates |
+
+The `move_php_class` tool provides enhanced PHP class moving capabilities:
+- Updates the namespace declaration in the moved file
+- Updates all `use` statements across the project
+- Updates class references (extends, implements, type hints)
+- Supports PSR-4 namespace auto-detection from directory structure
 
 ## Building
 
@@ -109,6 +123,11 @@ Once connected, you can ask Claude to:
 - "Move `Utils.java` to the `helpers` package"
 - "Show me the contents of `src/main/java/App.java`"
 - "List all Java files in the project"
+
+### PHP-Specific Examples (PHPStorm)
+
+- "Move the `UserController` class to the `App\Http\Controllers\Api` namespace"
+- "Refactor `Services/PaymentService.php` to `Services/Payment/StripeService.php`"
 
 ## Testing
 

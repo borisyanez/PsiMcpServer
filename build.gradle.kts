@@ -26,9 +26,14 @@ dependencies {
 
         create(platformType, platformVersion)
 
-        // PHP plugin - only include when building for PHPStorm
+        // PHP plugin - always include for compilation, optional at runtime
+        // When building for IC/IU, download PHP plugin from marketplace
+        // When building for PS, use bundled version
         if (platformType.get() == "PS") {
             bundledPlugin("com.jetbrains.php")
+        } else {
+            // Use PHP plugin from JetBrains marketplace for compilation
+            plugin("com.jetbrains.php", "243.21565.193")
         }
     }
 

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.psiMcpServer.php.PhpPluginHelper;
 import com.github.psiMcpServer.tools.*;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
@@ -43,7 +44,24 @@ public class ToolRegistry {
         register(new GetFileContentsTool(project));
         register(new GetElementInfoTool(project));
 
+        // PHP-specific tools (only when PHP plugin is available)
+        registerPhpTools();
+
         LOG.info("Registered " + tools.size() + " MCP tools");
+    }
+
+    /**
+     * Register PHP-specific tools if the PHP plugin is available.
+     */
+    private void registerPhpTools() {
+        if (PhpPluginHelper.isPhpPluginAvailable()) {
+            try {
+                register(new MovePhpClassTool(project));
+                LOG.info("PHP plugin detected - registered PHP-specific tools");
+            } catch (Exception e) {
+                LOG.warn("Failed to register PHP tools: " + e.getMessage());
+            }
+        }
     }
 
     /**
