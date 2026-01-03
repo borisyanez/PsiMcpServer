@@ -41,24 +41,62 @@ public class ManualReferenceUpdater {
 
     /**
      * Update a class reference (in extends, implements, type hints, etc.)
+     * Adds a use statement and uses the short class name instead of inline FQN.
      */
     public void updateClassReference(ClassReference classRef, String newFqn) {
         WriteCommandAction.runWriteCommandAction(project, () -> {
-            // Determine if we need FQN or short name
             PsiFile file = classRef.getContainingFile();
-            boolean hasMatchingUse = hasUseStatementFor(file, newFqn);
+            if (!(file instanceof PhpFile phpFile)) return;
 
-            String replacement = hasMatchingUse
-                ? getShortName(newFqn)
-                : "\\" + newFqn;
+            // Normalize FQN
+            String normalizedFqn = newFqn.startsWith("\\") ? newFqn.substring(1) : newFqn;
+            String shortName = getShortName(normalizedFqn);
 
+            // Check if the file's namespace matches the class's namespace
+            // If so, we don't need a use statement - just use the short name
+            String classNamespace = extractNamespace(normalizedFqn);
+            String fileNamespace = getFileNamespace(phpFile);
+
+            boolean sameNamespace = classNamespace.equals(fileNamespace);
+
+            if (!sameNamespace) {
+                // Add use statement if not already present
+                if (!hasUseStatementFor(file, normalizedFqn)) {
+                    addUseStatementInternal(phpFile, normalizedFqn);
+                }
+            }
+
+            // Always use short name (either same namespace or use statement added)
             ClassReference newRef = PhpPsiElementFactory.createClassReference(
                 project,
-                replacement
+                shortName
             );
 
             classRef.replace(newRef);
         });
+    }
+
+    /**
+     * Extract namespace from a fully qualified name.
+     */
+    private String extractNamespace(String fqn) {
+        if (fqn == null) return "";
+        int lastSlash = fqn.lastIndexOf('\\');
+        return lastSlash >= 0 ? fqn.substring(0, lastSlash) : "";
+    }
+
+    /**
+     * Get the namespace of a PHP file.
+     */
+    private String getFileNamespace(PhpFile phpFile) {
+        PhpNamespace namespace = getFirstNamespace(phpFile);
+        if (namespace != null) {
+            String fqn = namespace.getFQN();
+            if (fqn != null) {
+                return fqn.startsWith("\\") ? fqn.substring(1) : fqn;
+            }
+        }
+        return "";
     }
 
     /**
