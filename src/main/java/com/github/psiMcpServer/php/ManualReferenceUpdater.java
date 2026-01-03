@@ -41,7 +41,8 @@ public class ManualReferenceUpdater {
 
     /**
      * Update a class reference (in extends, implements, type hints, etc.)
-     * Adds a use statement and uses the short class name instead of inline FQN.
+     * For namespaced classes: adds a use statement and uses the short class name.
+     * For global namespace classes: uses backslash prefix (\ClassName).
      */
     public void updateClassReference(ClassReference classRef, String newFqn) {
         WriteCommandAction.runWriteCommandAction(project, () -> {
@@ -52,24 +53,33 @@ public class ManualReferenceUpdater {
             String normalizedFqn = newFqn.startsWith("\\") ? newFqn.substring(1) : newFqn;
             String shortName = getShortName(normalizedFqn);
 
-            // Check if the file's namespace matches the class's namespace
-            // If so, we don't need a use statement - just use the short name
+            // Check if the class is in the global namespace
             String classNamespace = extractNamespace(normalizedFqn);
-            String fileNamespace = getFileNamespace(phpFile);
+            boolean isGlobalNamespaceClass = classNamespace.isEmpty();
 
+            // Check if the file's namespace matches the class's namespace
+            String fileNamespace = getFileNamespace(phpFile);
             boolean sameNamespace = classNamespace.equals(fileNamespace);
 
-            if (!sameNamespace) {
-                // Add use statement if not already present
+            String replacement;
+
+            if (sameNamespace) {
+                // Same namespace - just use the short name
+                replacement = shortName;
+            } else if (isGlobalNamespaceClass) {
+                // Global namespace class - use backslash prefix
+                replacement = "\\" + shortName;
+            } else {
+                // Different namespace - add use statement and use short name
                 if (!hasUseStatementFor(file, normalizedFqn)) {
                     addUseStatementInternal(phpFile, normalizedFqn);
                 }
+                replacement = shortName;
             }
 
-            // Always use short name (either same namespace or use statement added)
             ClassReference newRef = PhpPsiElementFactory.createClassReference(
                 project,
-                shortName
+                replacement
             );
 
             classRef.replace(newRef);

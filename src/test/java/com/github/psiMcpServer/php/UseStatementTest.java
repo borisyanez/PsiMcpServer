@@ -178,6 +178,58 @@ public class UseStatementTest {
         assertThat(isSameNamespace(classNamespace, fileNamespace)).isTrue();
     }
 
+    // ========== Global Namespace Class Detection Tests ==========
+
+    @Test
+    public void testIsGlobalNamespaceClass_True() {
+        assertThat(isGlobalNamespaceClass("DateTime")).isTrue();
+        assertThat(isGlobalNamespaceClass("Exception")).isTrue();
+        assertThat(isGlobalNamespaceClass("MyClass")).isTrue();
+    }
+
+    @Test
+    public void testIsGlobalNamespaceClass_False() {
+        assertThat(isGlobalNamespaceClass("App\\Models\\User")).isFalse();
+        assertThat(isGlobalNamespaceClass("App\\User")).isFalse();
+    }
+
+    // ========== Reference Replacement Logic Tests ==========
+
+    @Test
+    public void testGetReplacement_SameNamespace() {
+        String classFqn = "App\\Models\\User";
+        String fileNamespace = "App\\Models";
+        String replacement = getReplacement(classFqn, fileNamespace);
+        assertThat(replacement).isEqualTo("User");
+    }
+
+    @Test
+    public void testGetReplacement_DifferentNamespace_AddsUseStatement() {
+        String classFqn = "App\\Models\\User";
+        String fileNamespace = "App\\Services";
+        String replacement = getReplacement(classFqn, fileNamespace);
+        // Should use short name (use statement would be added separately)
+        assertThat(replacement).isEqualTo("User");
+    }
+
+    @Test
+    public void testGetReplacement_GlobalNamespaceClass_UsesBackslash() {
+        String classFqn = "DateTime";
+        String fileNamespace = "App\\Services";
+        String replacement = getReplacement(classFqn, fileNamespace);
+        // Global namespace classes should be prefixed with backslash
+        assertThat(replacement).isEqualTo("\\DateTime");
+    }
+
+    @Test
+    public void testGetReplacement_GlobalNamespaceClass_BothGlobal() {
+        String classFqn = "MyHelper";
+        String fileNamespace = "";
+        String replacement = getReplacement(classFqn, fileNamespace);
+        // Both in global namespace - just use short name
+        assertThat(replacement).isEqualTo("MyHelper");
+    }
+
     // ========== Use Statement Insertion Position Tests ==========
 
     @Test
@@ -251,6 +303,35 @@ public class UseStatementTest {
 
     private boolean isSameNamespace(String classNamespace, String fileNamespace) {
         return classNamespace.equals(fileNamespace);
+    }
+
+    private boolean isGlobalNamespaceClass(String fqn) {
+        String normalizedFqn = normalizeFqn(fqn);
+        String namespace = extractNamespace(normalizedFqn);
+        return namespace.isEmpty();
+    }
+
+    /**
+     * Mirrors the logic in ManualReferenceUpdater.updateClassReference
+     * Returns what the class reference should be replaced with.
+     */
+    private String getReplacement(String classFqn, String fileNamespace) {
+        String normalizedFqn = normalizeFqn(classFqn);
+        String shortName = getShortName(normalizedFqn);
+        String classNamespace = extractNamespace(normalizedFqn);
+        boolean isGlobalNsClass = classNamespace.isEmpty();
+        boolean sameNamespace = classNamespace.equals(fileNamespace);
+
+        if (sameNamespace) {
+            // Same namespace - just use the short name
+            return shortName;
+        } else if (isGlobalNsClass) {
+            // Global namespace class - use backslash prefix
+            return "\\" + shortName;
+        } else {
+            // Different namespace - use short name (use statement added separately)
+            return shortName;
+        }
     }
 
     private int findUseStatementInsertPosition(String text) {
