@@ -77,10 +77,18 @@ public class ManualReferenceUpdater {
                 if (document == null) return;
 
                 String text = document.getText();
-                String useStatement = "use " + fqn + ";";
 
-                // Check if there's already a use statement with this FQN (text-based check)
-                if (text.contains(useStatement)) return;
+                // Normalize FQN - remove leading backslash for the use statement
+                String normalizedFqn = fqn.startsWith("\\") ? fqn.substring(1) : fqn;
+                String useStatement = "use " + normalizedFqn + ";";
+
+                // Check if there's already a use statement with this FQN (text-based check with regex)
+                // This handles variations like "use \Namespace\Class;" vs "use Namespace\Class;"
+                String escapedFqn = java.util.regex.Pattern.quote(normalizedFqn);
+                java.util.regex.Pattern existingUsePattern = java.util.regex.Pattern.compile(
+                    "use\\s+\\\\?" + escapedFqn + "\\s*;"
+                );
+                if (existingUsePattern.matcher(text).find()) return;
 
                 String newText = null;
 
@@ -252,10 +260,18 @@ public class ManualReferenceUpdater {
             if (document == null) return;
 
             String text = document.getText();
-            String useStatement = "use " + fqn + ";";
 
-            // Check if there's already a use statement with this FQN (text-based check)
-            if (text.contains(useStatement)) return;
+            // Normalize FQN - remove leading backslash for the use statement
+            String normalizedFqn = fqn.startsWith("\\") ? fqn.substring(1) : fqn;
+            String useStatement = "use " + normalizedFqn + ";";
+
+            // Check if there's already a use statement with this FQN (text-based check with regex)
+            // This handles variations like "use \Namespace\Class;" vs "use Namespace\Class;"
+            String escapedFqn = java.util.regex.Pattern.quote(normalizedFqn);
+            java.util.regex.Pattern existingUsePattern = java.util.regex.Pattern.compile(
+                "use\\s+\\\\?" + escapedFqn + "\\s*;"
+            );
+            if (existingUsePattern.matcher(text).find()) return;
 
             String newText = null;
 
@@ -533,14 +549,22 @@ public class ManualReferenceUpdater {
     // Helper methods
 
     private boolean hasUseStatementFor(PsiFile file, String fqn) {
+        // Normalize FQN by removing leading backslash for comparison
+        String normalizedFqn = fqn.startsWith("\\") ? fqn.substring(1) : fqn;
+
         final boolean[] found = {false};
         file.accept(new PsiRecursiveElementVisitor() {
             @Override
             public void visitElement(@NotNull PsiElement element) {
                 if (element instanceof PhpUse) {
                     PhpUse use = (PhpUse) element;
-                    if (fqn.equals(use.getFQN())) {
-                        found[0] = true;
+                    String useFqn = use.getFQN();
+                    if (useFqn != null) {
+                        // Normalize the use statement FQN as well
+                        String normalizedUseFqn = useFqn.startsWith("\\") ? useFqn.substring(1) : useFqn;
+                        if (normalizedFqn.equals(normalizedUseFqn)) {
+                            found[0] = true;
+                        }
                     }
                 }
                 super.visitElement(element);
