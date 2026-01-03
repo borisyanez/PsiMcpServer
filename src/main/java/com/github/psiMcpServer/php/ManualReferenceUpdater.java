@@ -241,27 +241,9 @@ public class ManualReferenceUpdater {
                 String refFqn = classRef.getFQN();
 
                 if (refName != null && refFqn != null) {
-                    // Skip if it's a built-in or already has a use statement
-                    if (isBuiltInClass(refName)) {
-                        continue;
-                    }
-
-                    // Check if this was a same-namespace reference (short name resolved to old namespace)
-                    if (!oldNamespace.isEmpty() && refFqn.equals(oldNamespace + "\\" + refName)) {
-                        // This class was in the old namespace - need to add a use statement
-                        // because after the move, the short name won't resolve to it anymore
-                        String fullClassName = oldNamespace + "\\" + refName;
-
-                        // Check if we already have a use statement for this
-                        if (!hasUseStatementFor(movedFile, fullClassName)) {
-                            // Add use statement for the old sibling class
-                            addUseStatementInternal(movedFile, fullClassName);
-                            updatedCount[0]++;
-                        }
-                    }
-
                     // Handle moving FROM global namespace to a different namespace:
                     // References to other global namespace classes need to be prefixed with "\"
+                    // This applies to ALL classes (including built-ins like DateTime, Exception)
                     if (oldNamespace.isEmpty() && !newNamespace.isEmpty()) {
                         // Check if the reference is unqualified (short name) and resolves to global namespace
                         String refText = classRef.getText();
@@ -281,7 +263,27 @@ public class ManualReferenceUpdater {
                                 );
                                 classRef.replace(newRef);
                                 updatedCount[0]++;
+                                continue; // Already handled this reference
                             }
+                        }
+                    }
+
+                    // Skip built-in classes for the remaining logic (use statement handling)
+                    if (isBuiltInClass(refName)) {
+                        continue;
+                    }
+
+                    // Check if this was a same-namespace reference (short name resolved to old namespace)
+                    if (!oldNamespace.isEmpty() && refFqn.equals(oldNamespace + "\\" + refName)) {
+                        // This class was in the old namespace - need to add a use statement
+                        // because after the move, the short name won't resolve to it anymore
+                        String fullClassName = oldNamespace + "\\" + refName;
+
+                        // Check if we already have a use statement for this
+                        if (!hasUseStatementFor(movedFile, fullClassName)) {
+                            // Add use statement for the old sibling class
+                            addUseStatementInternal(movedFile, fullClassName);
+                            updatedCount[0]++;
                         }
                     }
 
