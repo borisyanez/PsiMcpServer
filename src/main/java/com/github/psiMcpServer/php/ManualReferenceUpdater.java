@@ -62,49 +62,65 @@ public class ManualReferenceUpdater {
     }
 
     /**
-     * Add a use statement to a file if not present
+     * Add a use statement to a file if not present.
+     * Uses document-level text manipulation for reliability.
      */
     public void addUseStatement(PsiFile file, String fqn) {
         WriteCommandAction.runWriteCommandAction(project, () -> {
             if (!(file instanceof PhpFile)) return;
-            PhpFile phpFile = (PhpFile) file;
 
             // Check if use already exists
             if (hasUseStatementFor(file, fqn)) return;
 
-            // Find or create use list
-            PhpNamespace namespace = getFirstNamespace(phpFile);
+            try {
+                com.intellij.openapi.editor.Document document = PsiDocumentManager.getInstance(project).getDocument(file);
+                if (document == null) return;
 
-            PhpUseList newUse = PhpPsiElementFactory.createUseStatement(
-                project,
-                fqn,
-                null
-            );
+                String text = document.getText();
+                String useStatement = "use " + fqn + ";";
 
-            if (namespace != null) {
-                // Add after namespace declaration or last existing use statement
-                PsiElement anchor = findLastUseStatement(namespace);
-                if (anchor != null) {
-                    namespace.addAfter(newUse, anchor);
+                // Check if there's already a use statement with this FQN (text-based check)
+                if (text.contains(useStatement)) return;
+
+                String newText = null;
+
+                // Check for existing use statements
+                java.util.regex.Pattern usePattern = java.util.regex.Pattern.compile("(use\\s+[^;]+;\\s*)+");
+                java.util.regex.Matcher useMatcher = usePattern.matcher(text);
+
+                if (useMatcher.find()) {
+                    // Add after the last use statement
+                    int insertPos = useMatcher.end();
+                    newText = text.substring(0, insertPos) + "\n" + useStatement + text.substring(insertPos);
                 } else {
-                    // Find the namespace statement end (semicolon or opening brace)
-                    PsiElement insertPoint = findNamespaceStatementEnd(namespace);
-                    if (insertPoint != null) {
-                        namespace.addAfter(newUse, insertPoint);
+                    // No existing use statements - find where to insert
+                    // Check for namespace first
+                    java.util.regex.Pattern nsPattern = java.util.regex.Pattern.compile("namespace\\s+[^;]+;\\s*");
+                    java.util.regex.Matcher nsMatcher = nsPattern.matcher(text);
+
+                    if (nsMatcher.find()) {
+                        // Insert after namespace declaration
+                        int insertPos = nsMatcher.end();
+                        newText = text.substring(0, insertPos) + "\n" + useStatement + "\n" + text.substring(insertPos);
                     } else {
-                        // Fallback: add after first child
-                        namespace.addAfter(newUse, namespace.getFirstChild());
+                        // No namespace - insert after <?php tag
+                        java.util.regex.Pattern phpTagPattern = java.util.regex.Pattern.compile("<\\?php\\s*");
+                        java.util.regex.Matcher phpMatcher = phpTagPattern.matcher(text);
+
+                        if (phpMatcher.find()) {
+                            int insertPos = phpMatcher.end();
+                            newText = text.substring(0, insertPos) + "\n" + useStatement + "\n" + text.substring(insertPos);
+                        }
                     }
                 }
-            } else {
-                // No namespace, add at top after <?php
-                PsiElement anchor = findLastUseStatement(phpFile);
-                if (anchor != null) {
-                    phpFile.addAfter(newUse, anchor);
-                } else {
-                    PsiElement openTag = phpFile.getFirstChild();
-                    phpFile.addAfter(newUse, openTag);
+
+                if (newText != null && !newText.equals(text)) {
+                    document.setText(newText);
+                    PsiDocumentManager.getInstance(project).commitDocument(document);
                 }
+            } catch (Exception e) {
+                com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
+                    .error("Failed to add use statement", e);
             }
         });
     }
@@ -225,40 +241,61 @@ public class ManualReferenceUpdater {
 
     /**
      * Internal method to add use statement during a write action.
+     * Uses document-level text manipulation for reliability.
      */
     private void addUseStatementInternal(PhpFile phpFile, String fqn) {
         // Check if use already exists
         if (hasUseStatementFor(phpFile, fqn)) return;
 
-        PhpNamespace namespace = getFirstNamespace(phpFile);
+        try {
+            com.intellij.openapi.editor.Document document = PsiDocumentManager.getInstance(project).getDocument(phpFile);
+            if (document == null) return;
 
-        PhpUseList newUse = PhpPsiElementFactory.createUseStatement(
-            project,
-            fqn,
-            null
-        );
+            String text = document.getText();
+            String useStatement = "use " + fqn + ";";
 
-        if (namespace != null) {
-            PsiElement anchor = findLastUseStatement(namespace);
-            if (anchor != null) {
-                namespace.addAfter(newUse, anchor);
+            // Check if there's already a use statement with this FQN (text-based check)
+            if (text.contains(useStatement)) return;
+
+            String newText = null;
+
+            // Check for existing use statements
+            java.util.regex.Pattern usePattern = java.util.regex.Pattern.compile("(use\\s+[^;]+;\\s*)+");
+            java.util.regex.Matcher useMatcher = usePattern.matcher(text);
+
+            if (useMatcher.find()) {
+                // Add after the last use statement
+                int insertPos = useMatcher.end();
+                newText = text.substring(0, insertPos) + "\n" + useStatement + text.substring(insertPos);
             } else {
-                // Find the namespace statement end (semicolon or opening brace)
-                PsiElement insertPoint = findNamespaceStatementEnd(namespace);
-                if (insertPoint != null) {
-                    namespace.addAfter(newUse, insertPoint);
+                // No existing use statements - find where to insert
+                // Check for namespace first
+                java.util.regex.Pattern nsPattern = java.util.regex.Pattern.compile("namespace\\s+[^;]+;\\s*");
+                java.util.regex.Matcher nsMatcher = nsPattern.matcher(text);
+
+                if (nsMatcher.find()) {
+                    // Insert after namespace declaration
+                    int insertPos = nsMatcher.end();
+                    newText = text.substring(0, insertPos) + "\n" + useStatement + "\n" + text.substring(insertPos);
                 } else {
-                    namespace.addAfter(newUse, namespace.getFirstChild());
+                    // No namespace - insert after <?php tag
+                    java.util.regex.Pattern phpTagPattern = java.util.regex.Pattern.compile("<\\?php\\s*");
+                    java.util.regex.Matcher phpMatcher = phpTagPattern.matcher(text);
+
+                    if (phpMatcher.find()) {
+                        int insertPos = phpMatcher.end();
+                        newText = text.substring(0, insertPos) + "\n" + useStatement + "\n" + text.substring(insertPos);
+                    }
                 }
             }
-        } else {
-            PsiElement anchor = findLastUseStatement(phpFile);
-            if (anchor != null) {
-                phpFile.addAfter(newUse, anchor);
-            } else {
-                PsiElement openTag = phpFile.getFirstChild();
-                phpFile.addAfter(newUse, openTag);
+
+            if (newText != null && !newText.equals(text)) {
+                document.setText(newText);
+                PsiDocumentManager.getInstance(project).commitDocument(document);
             }
+        } catch (Exception e) {
+            com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
+                .error("Failed to add use statement internally", e);
         }
     }
 
