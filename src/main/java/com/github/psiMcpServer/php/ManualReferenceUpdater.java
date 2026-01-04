@@ -23,19 +23,66 @@ public class ManualReferenceUpdater {
     }
 
     /**
-     * Update a use statement to new namespace
+     * Update a use statement to new namespace using text manipulation.
+     * This is more reliable than PSI manipulation when multiple files are being modified.
      */
     public void updateUseStatement(PhpUse useStatement, String newFqn) {
         WriteCommandAction.runWriteCommandAction(project, () -> {
-            // Create new use statement
-            PhpUseList newUseList = PhpPsiElementFactory.createUseStatement(
-                project,
-                newFqn,
-                useStatement.getAliasName()  // preserve alias if exists
-            );
+            try {
+                PsiFile file = useStatement.getContainingFile();
+                if (file == null) return;
 
-            // Replace old with new
-            useStatement.getParent().replace(newUseList);
+                com.intellij.openapi.vfs.VirtualFile vFile = file.getVirtualFile();
+                if (vFile == null) return;
+
+                // Get fresh content from VirtualFile
+                String text;
+                try {
+                    text = new String(vFile.contentsToByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+                } catch (Exception e) {
+                    return;
+                }
+
+                // Get the old FQN from the use statement
+                String oldFqn = useStatement.getFQN();
+                if (oldFqn == null) return;
+
+                // Normalize FQNs
+                String normalizedOldFqn = oldFqn.startsWith("\\") ? oldFqn.substring(1) : oldFqn;
+                String normalizedNewFqn = newFqn.startsWith("\\") ? newFqn.substring(1) : newFqn;
+
+                // Get alias if exists
+                String alias = useStatement.getAliasName();
+
+                // Build patterns to find and replace the use statement
+                // Pattern: use OldNamespace\ClassName; or use OldNamespace\ClassName as Alias;
+                String escapedOldFqn = java.util.regex.Pattern.quote(normalizedOldFqn);
+                java.util.regex.Pattern usePattern;
+                String replacement;
+
+                if (alias != null && !alias.isEmpty()) {
+                    usePattern = java.util.regex.Pattern.compile(
+                        "use\\s+\\\\?" + escapedOldFqn + "\\s+as\\s+" + java.util.regex.Pattern.quote(alias) + "\\s*;"
+                    );
+                    replacement = "use " + normalizedNewFqn + " as " + alias + ";";
+                } else {
+                    usePattern = java.util.regex.Pattern.compile(
+                        "use\\s+\\\\?" + escapedOldFqn + "\\s*;"
+                    );
+                    replacement = "use " + normalizedNewFqn + ";";
+                }
+
+                java.util.regex.Matcher matcher = usePattern.matcher(text);
+                if (matcher.find()) {
+                    String newText = matcher.replaceFirst(replacement);
+                    if (!newText.equals(text)) {
+                        vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    }
+                }
+            } catch (Exception e) {
+                com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
+                    .error("Failed to update use statement", e);
+            }
         });
     }
 
