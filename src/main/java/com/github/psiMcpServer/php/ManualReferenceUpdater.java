@@ -66,8 +66,17 @@ public class ManualReferenceUpdater {
             if (oldRefText == null) return;
 
             try {
-                // Get text from file (works even without Document)
-                String text = file.getText();
+                // Get text from VirtualFile (always fresh, not cached like PsiFile)
+                com.intellij.openapi.vfs.VirtualFile vFile = file.getVirtualFile();
+                if (vFile == null) return;
+
+                String text;
+                try {
+                    text = new String(vFile.contentsToByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+                } catch (Exception e) {
+                    text = file.getText(); // Fallback to PsiFile
+                }
+
                 String replacement;
                 boolean needsUseStatement = false;
 
@@ -106,10 +115,7 @@ public class ManualReferenceUpdater {
 
                 // Write changes if any
                 if (!newText.equals(text)) {
-                    com.intellij.openapi.vfs.VirtualFile vFile = file.getVirtualFile();
-                    if (vFile != null) {
-                        vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                    }
+                    vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 }
 
             } catch (Exception e) {
@@ -461,12 +467,25 @@ public class ManualReferenceUpdater {
             return text.substring(0, insertPos) + "\n\n" + useStatement + text.substring(insertPos);
         }
 
-        // No namespace - insert after <?php tag
+        // No namespace - insert after <?php tag and any opening docblock
         java.util.regex.Pattern phpTagPattern = java.util.regex.Pattern.compile("<\\?php\\s*");
-        java.util.regex.Matcher phpMatcher = phpTagPattern.matcher(text);
+        java.util.regex.Matcher phpMatcher = phpTagPattern.matcher(fileLevelText);
 
         if (phpMatcher.find()) {
             int insertPos = phpMatcher.end();
+
+            // Check if there's a docblock comment immediately after <?php
+            // Pattern matches /** ... */ style comments
+            String afterPhpTag = fileLevelText.substring(insertPos);
+            java.util.regex.Pattern docBlockPattern = java.util.regex.Pattern.compile(
+                "^(\\s*/\\*\\*[\\s\\S]*?\\*/\\s*)"
+            );
+            java.util.regex.Matcher docMatcher = docBlockPattern.matcher(afterPhpTag);
+            if (docMatcher.find()) {
+                // Skip past the docblock
+                insertPos += docMatcher.end();
+            }
+
             return text.substring(0, insertPos) + "\n" + useStatement + "\n" + text.substring(insertPos);
         }
 
