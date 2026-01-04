@@ -98,14 +98,23 @@ public class MovePhpClassTool extends BaseTool {
             }
             PsiDirectory targetDir = targetDirOpt.get();
 
-            // Check if source and target are the same
-            PsiDirectory sourceDir = sourceFile.getContainingDirectory();
-            if (sourceDir != null && sourceDir.equals(targetDir)) {
+            // Check if source and target are the same (requires read action)
+            final PsiFile finalSourceFile = sourceFile;
+            final PsiDirectory finalTargetDir = targetDir;
+            Boolean sameDir = com.intellij.openapi.application.ApplicationManager.getApplication().runReadAction(
+                (com.intellij.openapi.util.Computable<Boolean>) () -> {
+                    PsiDirectory sourceDir = finalSourceFile.getContainingDirectory();
+                    return sourceDir != null && sourceDir.equals(finalTargetDir);
+                }
+            );
+            if (sameDir) {
                 return error("Source file is already in the target directory");
             }
 
-            // Extract class name for the task title
-            String fileName = sourceFile.getName();
+            // Extract class name for the task title (requires read action)
+            String fileName = com.intellij.openapi.application.ApplicationManager.getApplication().runReadAction(
+                (com.intellij.openapi.util.Computable<String>) finalSourceFile::getName
+            );
             String className = fileName.endsWith(".php") ? fileName.substring(0, fileName.length() - 4) : fileName;
 
             // Perform the PHP class move with progress reporting

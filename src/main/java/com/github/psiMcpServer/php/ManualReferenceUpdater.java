@@ -66,10 +66,8 @@ public class ManualReferenceUpdater {
             if (oldRefText == null) return;
 
             try {
-                com.intellij.openapi.editor.Document document = PsiDocumentManager.getInstance(project).getDocument(file);
-                if (document == null) return;
-
-                String text = document.getText();
+                // Get text from file (works even without Document)
+                String text = file.getText();
                 String replacement;
                 boolean needsUseStatement = false;
 
@@ -92,25 +90,27 @@ public class ManualReferenceUpdater {
                     }
                 }
 
+                String newText = text;
+
                 // Add use statement first if needed
                 if (needsUseStatement) {
                     String useStatement = "use " + normalizedFqn + ";";
-                    text = insertUseStatement(text, useStatement);
+                    newText = insertUseStatement(newText, useStatement);
                 }
 
-                // Now replace the class reference using PSI (more reliable for this specific case)
-                // Update document first if we added a use statement
-                if (needsUseStatement) {
-                    document.setText(text);
-                    PsiDocumentManager.getInstance(project).commitDocument(document);
-                }
+                // Replace the class reference in text
+                // Find and replace the old reference with the new one
+                // Use regex to be precise about what we're replacing
+                String oldRefPattern = "(?<![\\\\A-Za-z0-9_])" + java.util.regex.Pattern.quote(oldRefText) + "(?![\\\\A-Za-z0-9_])";
+                newText = newText.replaceFirst(oldRefPattern, replacement);
 
-                // Use PSI to replace the class reference (this is more precise)
-                ClassReference newRef = PhpPsiElementFactory.createClassReference(
-                    project,
-                    replacement
-                );
-                classRef.replace(newRef);
+                // Write changes if any
+                if (!newText.equals(text)) {
+                    com.intellij.openapi.vfs.VirtualFile vFile = file.getVirtualFile();
+                    if (vFile != null) {
+                        vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    }
+                }
 
             } catch (Exception e) {
                 com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
@@ -192,6 +192,117 @@ public class ManualReferenceUpdater {
      * @param newNamespace The new namespace after move
      * @return Number of references updated
      */
+    public int updateFileForNamespaceChange(PhpFile movedFile, String oldNamespace, String newNamespace) {
+        final int[] updatedCount = {0};
+
+        WriteCommandAction.runWriteCommandAction(project, () -> {
+            // First, collect information about what needs to be updated using PSI
+            java.util.List<String> globalClassesToPrefix = new java.util.ArrayList<>();
+
+            movedFile.accept(new PsiRecursiveElementVisitor() {
+                @Override
+                public void visitElement(@NotNull PsiElement element) {
+                    if (element instanceof ClassReference classRef) {
+                        String refName = classRef.getName();
+                        String refFqn = classRef.getFQN();
+                        String refText = classRef.getText();
+
+                        if (refName != null && refFqn != null && refText != null) {
+                            // Handle moving FROM global namespace to a different namespace
+                            if (oldNamespace.isEmpty() && !newNamespace.isEmpty()) {
+                                // Skip if already fully qualified
+                                if (!refText.startsWith("\\")) {
+                                    String normalizedFqn = refFqn.startsWith("\\") ? refFqn.substring(1) : refFqn;
+                                    boolean isGlobalNamespaceClass = !normalizedFqn.contains("\\");
+
+                                    if (isGlobalNamespaceClass && !globalClassesToPrefix.contains(refName) && !isPrimitiveType(refName)) {
+                                        globalClassesToPrefix.add(refName);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    super.visitElement(element);
+                }
+            });
+
+            // Now apply ALL changes in a single write
+            try {
+                String text = movedFile.getText();
+                String newText = text;
+
+                // 1. Prefix global namespace class references with backslash
+                for (String className : globalClassesToPrefix) {
+                    String pattern = "(?<![\\\\A-Za-z0-9_])" + java.util.regex.Pattern.quote(className) + "(?![\\\\A-Za-z0-9_])";
+                    java.util.regex.Pattern p = java.util.regex.Pattern.compile(pattern);
+                    java.util.regex.Matcher m = p.matcher(newText);
+
+                    StringBuffer sb = new StringBuffer();
+                    while (m.find()) {
+                        int pos = m.start();
+                        String before = newText.substring(0, pos);
+                        long singleQuotes = before.chars().filter(c -> c == '\'').count();
+                        long doubleQuotes = before.chars().filter(c -> c == '"').count();
+                        boolean inString = (singleQuotes % 2 == 1) || (doubleQuotes % 2 == 1);
+
+                        if (!inString) {
+                            m.appendReplacement(sb, "\\\\" + className);
+                            updatedCount[0]++;
+                        } else {
+                            m.appendReplacement(sb, className);
+                        }
+                    }
+                    m.appendTail(sb);
+                    newText = sb.toString();
+                }
+
+                // 2. Add or update namespace declaration
+                if (newNamespace != null && !newNamespace.isEmpty()) {
+                    java.util.regex.Pattern nsPattern = java.util.regex.Pattern.compile(
+                        "(namespace\\s+)[A-Za-z_\\\\][A-Za-z0-9_\\\\]*(\\s*;)"
+                    );
+                    java.util.regex.Matcher matcher = nsPattern.matcher(newText);
+
+                    if (matcher.find()) {
+                        // Replace existing namespace
+                        newText = matcher.replaceFirst("$1" + newNamespace.replace("\\", "\\\\") + "$2");
+                    } else {
+                        // No existing namespace - add after <?php tag
+                        java.util.regex.Pattern phpTagPattern = java.util.regex.Pattern.compile("(<\\?php\\s*)");
+                        java.util.regex.Matcher phpMatcher = phpTagPattern.matcher(newText);
+                        if (phpMatcher.find()) {
+                            newText = newText.substring(0, phpMatcher.end()) +
+                                      "\nnamespace " + newNamespace + ";\n" +
+                                      newText.substring(phpMatcher.end());
+                        }
+                    }
+                    updatedCount[0]++;
+                }
+
+                // Write all changes at once
+                if (!newText.equals(text)) {
+                    com.intellij.openapi.vfs.VirtualFile vFile = movedFile.getVirtualFile();
+                    if (vFile != null) {
+                        vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    }
+                }
+            } catch (Exception e) {
+                com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
+                    .error("Failed to update file for namespace change", e);
+            }
+        });
+
+        return updatedCount[0];
+    }
+
+    /**
+     * Update internal references inside a moved file (legacy method).
+     *
+     * @param movedFile The PHP file that was moved
+     * @param oldNamespace The original namespace before move
+     * @param newNamespace The new namespace after move
+     * @return Number of references updated
+     */
     public int updateInternalReferences(PhpFile movedFile, String oldNamespace, String newNamespace) {
         final int[] updatedCount = {0};
 
@@ -216,7 +327,7 @@ public class ManualReferenceUpdater {
                                     String normalizedFqn = refFqn.startsWith("\\") ? refFqn.substring(1) : refFqn;
                                     boolean isGlobalNamespaceClass = !normalizedFqn.contains("\\");
 
-                                    if (isGlobalNamespaceClass && !globalClassesToPrefix.contains(refName)) {
+                                    if (isGlobalNamespaceClass && !globalClassesToPrefix.contains(refName) && !isPrimitiveType(refName)) {
                                         globalClassesToPrefix.add(refName);
                                     }
                                 }
@@ -238,12 +349,10 @@ public class ManualReferenceUpdater {
                 }
             });
 
-            // Now apply changes using document-level text manipulation
+            // Now apply changes using text manipulation
             try {
-                com.intellij.openapi.editor.Document document = PsiDocumentManager.getInstance(project).getDocument(movedFile);
-                if (document == null) return;
-
-                String text = document.getText();
+                // Get text from PsiFile directly (works even without Document)
+                String text = movedFile.getText();
                 String newText = text;
 
                 // 1. Prefix global namespace class references with backslash
@@ -298,8 +407,11 @@ public class ManualReferenceUpdater {
                 }
 
                 if (!newText.equals(text)) {
-                    document.setText(newText);
-                    PsiDocumentManager.getInstance(project).commitDocument(document);
+                    // Write directly to VirtualFile (works for newly copied files)
+                    com.intellij.openapi.vfs.VirtualFile vFile = movedFile.getVirtualFile();
+                    if (vFile != null) {
+                        vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    }
                 }
             } catch (Exception e) {
                 com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
@@ -312,11 +424,23 @@ public class ManualReferenceUpdater {
 
     /**
      * Insert a use statement into the text at the correct position.
+     * Use statements must be placed at file level, NOT inside class bodies.
      */
     private String insertUseStatement(String text, String useStatement) {
-        // Check for existing use statements - find the LAST one
+        // Find where classes/functions/traits start - use statements must be BEFORE these
+        java.util.regex.Pattern classStartPattern = java.util.regex.Pattern.compile(
+            "(?:^|\\s)(?:abstract\\s+|final\\s+)?(?:class|interface|trait|enum|function)\\s+",
+            java.util.regex.Pattern.MULTILINE
+        );
+        java.util.regex.Matcher classStartMatcher = classStartPattern.matcher(text);
+        int classStartPos = classStartMatcher.find() ? classStartMatcher.start() : text.length();
+
+        // Only look at the file-level portion (before any class/function/trait)
+        String fileLevelText = text.substring(0, classStartPos);
+
+        // Check for existing file-level use statements - find the LAST one
         java.util.regex.Pattern usePattern = java.util.regex.Pattern.compile("use\\s+[^;]+;");
-        java.util.regex.Matcher useMatcher = usePattern.matcher(text);
+        java.util.regex.Matcher useMatcher = usePattern.matcher(fileLevelText);
 
         int lastUseEnd = -1;
         while (useMatcher.find()) {
@@ -324,13 +448,13 @@ public class ManualReferenceUpdater {
         }
 
         if (lastUseEnd > 0) {
-            // Insert after the last use statement
+            // Insert after the last file-level use statement
             return text.substring(0, lastUseEnd) + "\n" + useStatement + text.substring(lastUseEnd);
         }
 
-        // No existing use statements - check for namespace
+        // No existing file-level use statements - check for namespace
         java.util.regex.Pattern nsPattern = java.util.regex.Pattern.compile("namespace\\s+[^;]+;");
-        java.util.regex.Matcher nsMatcher = nsPattern.matcher(text);
+        java.util.regex.Matcher nsMatcher = nsPattern.matcher(fileLevelText);
 
         if (nsMatcher.find()) {
             int insertPos = nsMatcher.end();
@@ -535,20 +659,26 @@ public class ManualReferenceUpdater {
     }
 
     /**
+     * Check if a name is a PHP primitive type (should never be prefixed with \).
+     */
+    private boolean isPrimitiveType(String name) {
+        java.util.Set<String> primitives = java.util.Set.of(
+            "array", "bool", "boolean", "callable", "false", "float", "int", "integer",
+            "iterable", "mixed", "never", "null", "numeric", "object", "resource",
+            "string", "true", "void"
+        );
+        return primitives.contains(name.toLowerCase());
+    }
+
+    /**
      * Update namespace declaration in a file using document-level text replacement.
      * This is more reliable than PSI manipulation for namespace changes.
      */
     public void updateNamespaceDeclaration(PhpFile file, String newNamespace) {
         WriteCommandAction.runWriteCommandAction(project, () -> {
             try {
-                com.intellij.openapi.editor.Document document = PsiDocumentManager.getInstance(project).getDocument(file);
-                if (document == null) {
-                    com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
-                        .warn("Could not get document for file: " + file.getName());
-                    return;
-                }
-
-                String text = document.getText();
+                // Get text from PsiFile directly (works even without Document)
+                String text = file.getText();
                 String newText = null;
 
                 // Pattern to match namespace declaration
@@ -567,7 +697,6 @@ public class ManualReferenceUpdater {
                     java.util.regex.Pattern phpTagPattern = java.util.regex.Pattern.compile("(<\\?php\\s*)");
                     java.util.regex.Matcher phpMatcher = phpTagPattern.matcher(text);
                     if (phpMatcher.find()) {
-                        String phpTag = phpMatcher.group(1);
                         newText = text.substring(0, phpMatcher.end()) +
                                   "\nnamespace " + newNamespace + ";\n" +
                                   text.substring(phpMatcher.end());
@@ -575,10 +704,13 @@ public class ManualReferenceUpdater {
                 }
 
                 if (newText != null && !newText.equals(text)) {
-                    document.setText(newText);
-                    PsiDocumentManager.getInstance(project).commitDocument(document);
-                    com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
-                        .info("Updated namespace to: " + newNamespace + " in file: " + file.getName());
+                    // Write directly to VirtualFile (works for newly copied files)
+                    com.intellij.openapi.vfs.VirtualFile vFile = file.getVirtualFile();
+                    if (vFile != null) {
+                        vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
+                            .info("Updated namespace to: " + newNamespace + " in file: " + file.getName());
+                    }
                 }
             } catch (Exception e) {
                 com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)

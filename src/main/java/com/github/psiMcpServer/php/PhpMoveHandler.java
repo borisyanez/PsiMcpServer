@@ -104,14 +104,12 @@ public class PhpMoveHandler {
 
             int updatedCount = 0;
 
-            // Stage 4: Update namespace declaration in the moved file
+            // Stage 4: Update internal references AND namespace in a single operation
+            // Both must be done together because writing to VirtualFile doesn't update
+            // PsiFile's cached text, so subsequent reads would get stale content.
             if (movedFile instanceof PhpFile movedPhpFile) {
-                reportProgress(indicator, "Updating namespace...", className);
-                updateNamespace(movedPhpFile, newNamespace);
-
-                // Stage 5: Update internal references inside the moved file
-                reportProgress(indicator, "Updating internal references...", className);
-                int internalUpdates = referenceUpdater.updateInternalReferences(
+                reportProgress(indicator, "Updating file content...", className);
+                int internalUpdates = referenceUpdater.updateFileForNamespaceChange(
                     movedPhpFile,
                     oldNamespace,
                     newNamespace
