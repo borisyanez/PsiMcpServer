@@ -61,28 +61,61 @@ public class ManualReferenceUpdater {
             String fileNamespace = getFileNamespace(phpFile);
             boolean sameNamespace = classNamespace.equals(fileNamespace);
 
-            String replacement;
+            // Get the current reference text to replace
+            String oldRefText = classRef.getText();
+            if (oldRefText == null) return;
 
-            if (sameNamespace) {
-                // Same namespace - just use the short name
-                replacement = shortName;
-            } else if (isGlobalNamespaceClass) {
-                // Global namespace class - use backslash prefix
-                replacement = "\\" + shortName;
-            } else {
-                // Different namespace - add use statement and use short name
-                if (!hasUseStatementFor(file, normalizedFqn)) {
-                    addUseStatementInternal(phpFile, normalizedFqn);
+            try {
+                com.intellij.openapi.editor.Document document = PsiDocumentManager.getInstance(project).getDocument(file);
+                if (document == null) return;
+
+                String text = document.getText();
+                String replacement;
+                boolean needsUseStatement = false;
+
+                if (sameNamespace) {
+                    // Same namespace - just use the short name
+                    replacement = shortName;
+                } else if (isGlobalNamespaceClass) {
+                    // Global namespace class - use backslash prefix
+                    replacement = "\\" + shortName;
+                } else {
+                    // Different namespace - add use statement and use short name
+                    replacement = shortName;
+                    // Check if use statement already exists
+                    String escapedFqn = java.util.regex.Pattern.quote(normalizedFqn);
+                    java.util.regex.Pattern existingUsePattern = java.util.regex.Pattern.compile(
+                        "use\\s+\\\\?" + escapedFqn + "\\s*;"
+                    );
+                    if (!existingUsePattern.matcher(text).find()) {
+                        needsUseStatement = true;
+                    }
                 }
-                replacement = shortName;
+
+                // Add use statement first if needed
+                if (needsUseStatement) {
+                    String useStatement = "use " + normalizedFqn + ";";
+                    text = insertUseStatement(text, useStatement);
+                }
+
+                // Now replace the class reference using PSI (more reliable for this specific case)
+                // Update document first if we added a use statement
+                if (needsUseStatement) {
+                    document.setText(text);
+                    PsiDocumentManager.getInstance(project).commitDocument(document);
+                }
+
+                // Use PSI to replace the class reference (this is more precise)
+                ClassReference newRef = PhpPsiElementFactory.createClassReference(
+                    project,
+                    replacement
+                );
+                classRef.replace(newRef);
+
+            } catch (Exception e) {
+                com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
+                    .error("Failed to update class reference", e);
             }
-
-            ClassReference newRef = PhpPsiElementFactory.createClassReference(
-                project,
-                replacement
-            );
-
-            classRef.replace(newRef);
         });
     }
 
@@ -115,10 +148,7 @@ public class ManualReferenceUpdater {
      */
     public void addUseStatement(PsiFile file, String fqn) {
         WriteCommandAction.runWriteCommandAction(project, () -> {
-            if (!(file instanceof PhpFile)) return;
-
-            // Check if use already exists
-            if (hasUseStatementFor(file, fqn)) return;
+            if (!(file instanceof PhpFile phpFile)) return;
 
             try {
                 com.intellij.openapi.editor.Document document = PsiDocumentManager.getInstance(project).getDocument(file);
@@ -131,46 +161,15 @@ public class ManualReferenceUpdater {
                 String useStatement = "use " + normalizedFqn + ";";
 
                 // Check if there's already a use statement with this FQN (text-based check with regex)
-                // This handles variations like "use \Namespace\Class;" vs "use Namespace\Class;"
                 String escapedFqn = java.util.regex.Pattern.quote(normalizedFqn);
                 java.util.regex.Pattern existingUsePattern = java.util.regex.Pattern.compile(
                     "use\\s+\\\\?" + escapedFqn + "\\s*;"
                 );
                 if (existingUsePattern.matcher(text).find()) return;
 
-                String newText = null;
+                String newText = insertUseStatement(text, useStatement);
 
-                // Check for existing use statements
-                java.util.regex.Pattern usePattern = java.util.regex.Pattern.compile("(use\\s+[^;]+;\\s*)+");
-                java.util.regex.Matcher useMatcher = usePattern.matcher(text);
-
-                if (useMatcher.find()) {
-                    // Add after the last use statement
-                    int insertPos = useMatcher.end();
-                    newText = text.substring(0, insertPos) + "\n" + useStatement + text.substring(insertPos);
-                } else {
-                    // No existing use statements - find where to insert
-                    // Check for namespace first
-                    java.util.regex.Pattern nsPattern = java.util.regex.Pattern.compile("namespace\\s+[^;]+;\\s*");
-                    java.util.regex.Matcher nsMatcher = nsPattern.matcher(text);
-
-                    if (nsMatcher.find()) {
-                        // Insert after namespace declaration
-                        int insertPos = nsMatcher.end();
-                        newText = text.substring(0, insertPos) + "\n" + useStatement + "\n" + text.substring(insertPos);
-                    } else {
-                        // No namespace - insert after <?php tag
-                        java.util.regex.Pattern phpTagPattern = java.util.regex.Pattern.compile("<\\?php\\s*");
-                        java.util.regex.Matcher phpMatcher = phpTagPattern.matcher(text);
-
-                        if (phpMatcher.find()) {
-                            int insertPos = phpMatcher.end();
-                            newText = text.substring(0, insertPos) + "\n" + useStatement + "\n" + text.substring(insertPos);
-                        }
-                    }
-                }
-
-                if (newText != null && !newText.equals(text)) {
+                if (!newText.equals(text)) {
                     document.setText(newText);
                     PsiDocumentManager.getInstance(project).commitDocument(document);
                 }
@@ -186,6 +185,8 @@ public class ManualReferenceUpdater {
      * This handles use statements, class references, and require/include statements
      * that relied on the old file location.
      *
+     * Uses document-level text manipulation for reliability.
+     *
      * @param movedFile The PHP file that was moved
      * @param oldNamespace The original namespace before move
      * @param newNamespace The new namespace after move
@@ -195,102 +196,114 @@ public class ManualReferenceUpdater {
         final int[] updatedCount = {0};
 
         WriteCommandAction.runWriteCommandAction(project, () -> {
-            // 1. Collect all use statements, class references, and include/require statements
-            java.util.List<PhpUse> useStatements = new java.util.ArrayList<>();
-            java.util.List<ClassReference> classReferences = new java.util.ArrayList<>();
-            java.util.List<Include> includeStatements = new java.util.ArrayList<>();
+            // First, collect information about what needs to be updated using PSI
+            java.util.List<String> globalClassesToPrefix = new java.util.ArrayList<>();
+            java.util.List<String> useStatementsToAdd = new java.util.ArrayList<>();
 
             movedFile.accept(new PsiRecursiveElementVisitor() {
                 @Override
                 public void visitElement(@NotNull PsiElement element) {
-                    if (element instanceof PhpUse) {
-                        useStatements.add((PhpUse) element);
-                    } else if (element instanceof ClassReference) {
-                        classReferences.add((ClassReference) element);
-                    } else if (element instanceof Include) {
-                        includeStatements.add((Include) element);
+                    if (element instanceof ClassReference classRef) {
+                        String refName = classRef.getName();
+                        String refFqn = classRef.getFQN();
+                        String refText = classRef.getText();
+
+                        if (refName != null && refFqn != null && refText != null) {
+                            // Handle moving FROM global namespace to a different namespace
+                            if (oldNamespace.isEmpty() && !newNamespace.isEmpty()) {
+                                // Skip if already fully qualified
+                                if (!refText.startsWith("\\")) {
+                                    String normalizedFqn = refFqn.startsWith("\\") ? refFqn.substring(1) : refFqn;
+                                    boolean isGlobalNamespaceClass = !normalizedFqn.contains("\\");
+
+                                    if (isGlobalNamespaceClass && !globalClassesToPrefix.contains(refName)) {
+                                        globalClassesToPrefix.add(refName);
+                                    }
+                                }
+                            }
+
+                            // Check for same-namespace references that need use statements
+                            if (!oldNamespace.isEmpty() && !isBuiltInClass(refName)) {
+                                if (refFqn.equals(oldNamespace + "\\" + refName) ||
+                                    refFqn.equals("\\" + oldNamespace + "\\" + refName)) {
+                                    String fullClassName = oldNamespace + "\\" + refName;
+                                    if (!useStatementsToAdd.contains(fullClassName)) {
+                                        useStatementsToAdd.add(fullClassName);
+                                    }
+                                }
+                            }
+                        }
                     }
                     super.visitElement(element);
                 }
             });
 
-            // 2. Update require/include statements with relative paths
-            for (Include include : includeStatements) {
-                if (updateIncludeStatement(include, oldNamespace, newNamespace)) {
-                    updatedCount[0]++;
-                }
-            }
+            // Now apply changes using document-level text manipulation
+            try {
+                com.intellij.openapi.editor.Document document = PsiDocumentManager.getInstance(project).getDocument(movedFile);
+                if (document == null) return;
 
-            // 2. Update use statements that were relative to old namespace
-            for (PhpUse useStatement : useStatements) {
-                String useFqn = useStatement.getFQN();
-                if (useFqn != null) {
-                    // Check if this use statement was importing from the old namespace (sibling classes)
-                    if (useFqn.startsWith(oldNamespace + "\\")) {
-                        // This was a sibling class - it stays the same (absolute FQN)
-                        // No change needed
-                    }
-                    // Check for relative imports that might have been resolved against old namespace
-                    // These would already be stored as FQN, so they should be fine
-                }
-            }
+                String text = document.getText();
+                String newText = text;
 
-            // 3. Check for unqualified class references that relied on same-namespace resolution
-            for (ClassReference classRef : classReferences) {
-                String refName = classRef.getName();
-                String refFqn = classRef.getFQN();
+                // 1. Prefix global namespace class references with backslash
+                for (String className : globalClassesToPrefix) {
+                    // Pattern to match unqualified class references
+                    // Matches: new ClassName, extends ClassName, implements ClassName,
+                    // ClassName::, : ClassName (type hints), catch (ClassName
+                    // But NOT: \ClassName (already qualified) or part of FQN like Namespace\ClassName
 
-                if (refName != null && refFqn != null) {
-                    // Handle moving FROM global namespace to a different namespace:
-                    // References to other global namespace classes need to be prefixed with "\"
-                    // This applies to ALL classes (including built-ins like DateTime, Exception)
-                    if (oldNamespace.isEmpty() && !newNamespace.isEmpty()) {
-                        // Check if the reference is unqualified (short name) and resolves to global namespace
-                        String refText = classRef.getText();
-                        // Skip if already fully qualified (starts with \)
-                        if (refText != null && !refText.startsWith("\\")) {
-                            // Check if this class is in the global namespace
-                            // FQN for global namespace classes is just the class name (no leading backslash in getFQN())
-                            // or might be \ClassName
-                            String normalizedFqn = refFqn.startsWith("\\") ? refFqn.substring(1) : refFqn;
-                            boolean isGlobalNamespaceClass = !normalizedFqn.contains("\\");
+                    // Match class name that is NOT preceded by \ or another identifier char
+                    // and NOT followed by \ (which would make it a namespace prefix)
+                    String pattern = "(?<![\\\\A-Za-z0-9_])" + java.util.regex.Pattern.quote(className) + "(?![\\\\A-Za-z0-9_])";
+                    java.util.regex.Pattern p = java.util.regex.Pattern.compile(pattern);
+                    java.util.regex.Matcher m = p.matcher(newText);
 
-                            if (isGlobalNamespaceClass) {
-                                // Prefix with backslash to make it explicitly global
-                                ClassReference newRef = PhpPsiElementFactory.createClassReference(
-                                    project,
-                                    "\\" + refName
-                                );
-                                classRef.replace(newRef);
-                                updatedCount[0]++;
-                                continue; // Already handled this reference
-                            }
-                        }
-                    }
+                    StringBuffer sb = new StringBuffer();
+                    while (m.find()) {
+                        // Check if this is in a string literal or comment (basic check)
+                        int pos = m.start();
+                        String before = newText.substring(0, pos);
 
-                    // Skip built-in classes for the remaining logic (use statement handling)
-                    if (isBuiltInClass(refName)) {
-                        continue;
-                    }
+                        // Skip if inside a string or comment (basic heuristic)
+                        long singleQuotes = before.chars().filter(c -> c == '\'').count();
+                        long doubleQuotes = before.chars().filter(c -> c == '"').count();
+                        boolean inString = (singleQuotes % 2 == 1) || (doubleQuotes % 2 == 1);
 
-                    // Check if this was a same-namespace reference (short name resolved to old namespace)
-                    if (!oldNamespace.isEmpty() && refFqn.equals(oldNamespace + "\\" + refName)) {
-                        // This class was in the old namespace - need to add a use statement
-                        // because after the move, the short name won't resolve to it anymore
-                        String fullClassName = oldNamespace + "\\" + refName;
-
-                        // Check if we already have a use statement for this
-                        if (!hasUseStatementFor(movedFile, fullClassName)) {
-                            // Add use statement for the old sibling class
-                            addUseStatementInternal(movedFile, fullClassName);
+                        if (!inString) {
+                            m.appendReplacement(sb, "\\\\" + className);
                             updatedCount[0]++;
+                        } else {
+                            m.appendReplacement(sb, className);
                         }
                     }
-
-                    // Check if the reference is to a class in the NEW namespace
-                    // (i.e., a class that was also moved to the same location)
-                    // In this case, no use statement is needed
+                    m.appendTail(sb);
+                    newText = sb.toString();
                 }
+
+                // 2. Add use statements for classes that need them
+                for (String fqn : useStatementsToAdd) {
+                    // Check if already exists in current text
+                    String normalizedFqn = fqn.startsWith("\\") ? fqn.substring(1) : fqn;
+                    String escapedFqn = java.util.regex.Pattern.quote(normalizedFqn);
+                    java.util.regex.Pattern existingUsePattern = java.util.regex.Pattern.compile(
+                        "use\\s+\\\\?" + escapedFqn + "\\s*;"
+                    );
+
+                    if (!existingUsePattern.matcher(newText).find()) {
+                        String useStatement = "use " + normalizedFqn + ";";
+                        newText = insertUseStatement(newText, useStatement);
+                        updatedCount[0]++;
+                    }
+                }
+
+                if (!newText.equals(text)) {
+                    document.setText(newText);
+                    PsiDocumentManager.getInstance(project).commitDocument(document);
+                }
+            } catch (Exception e) {
+                com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
+                    .error("Failed to update internal references", e);
             }
         });
 
@@ -298,13 +311,50 @@ public class ManualReferenceUpdater {
     }
 
     /**
+     * Insert a use statement into the text at the correct position.
+     */
+    private String insertUseStatement(String text, String useStatement) {
+        // Check for existing use statements - find the LAST one
+        java.util.regex.Pattern usePattern = java.util.regex.Pattern.compile("use\\s+[^;]+;");
+        java.util.regex.Matcher useMatcher = usePattern.matcher(text);
+
+        int lastUseEnd = -1;
+        while (useMatcher.find()) {
+            lastUseEnd = useMatcher.end();
+        }
+
+        if (lastUseEnd > 0) {
+            // Insert after the last use statement
+            return text.substring(0, lastUseEnd) + "\n" + useStatement + text.substring(lastUseEnd);
+        }
+
+        // No existing use statements - check for namespace
+        java.util.regex.Pattern nsPattern = java.util.regex.Pattern.compile("namespace\\s+[^;]+;");
+        java.util.regex.Matcher nsMatcher = nsPattern.matcher(text);
+
+        if (nsMatcher.find()) {
+            int insertPos = nsMatcher.end();
+            return text.substring(0, insertPos) + "\n\n" + useStatement + text.substring(insertPos);
+        }
+
+        // No namespace - insert after <?php tag
+        java.util.regex.Pattern phpTagPattern = java.util.regex.Pattern.compile("<\\?php\\s*");
+        java.util.regex.Matcher phpMatcher = phpTagPattern.matcher(text);
+
+        if (phpMatcher.find()) {
+            int insertPos = phpMatcher.end();
+            return text.substring(0, insertPos) + "\n" + useStatement + "\n" + text.substring(insertPos);
+        }
+
+        // Fallback - prepend
+        return useStatement + "\n" + text;
+    }
+
+    /**
      * Internal method to add use statement during a write action.
      * Uses document-level text manipulation for reliability.
      */
     private void addUseStatementInternal(PhpFile phpFile, String fqn) {
-        // Check if use already exists
-        if (hasUseStatementFor(phpFile, fqn)) return;
-
         try {
             com.intellij.openapi.editor.Document document = PsiDocumentManager.getInstance(project).getDocument(phpFile);
             if (document == null) return;
@@ -316,46 +366,15 @@ public class ManualReferenceUpdater {
             String useStatement = "use " + normalizedFqn + ";";
 
             // Check if there's already a use statement with this FQN (text-based check with regex)
-            // This handles variations like "use \Namespace\Class;" vs "use Namespace\Class;"
             String escapedFqn = java.util.regex.Pattern.quote(normalizedFqn);
             java.util.regex.Pattern existingUsePattern = java.util.regex.Pattern.compile(
                 "use\\s+\\\\?" + escapedFqn + "\\s*;"
             );
             if (existingUsePattern.matcher(text).find()) return;
 
-            String newText = null;
+            String newText = insertUseStatement(text, useStatement);
 
-            // Check for existing use statements
-            java.util.regex.Pattern usePattern = java.util.regex.Pattern.compile("(use\\s+[^;]+;\\s*)+");
-            java.util.regex.Matcher useMatcher = usePattern.matcher(text);
-
-            if (useMatcher.find()) {
-                // Add after the last use statement
-                int insertPos = useMatcher.end();
-                newText = text.substring(0, insertPos) + "\n" + useStatement + text.substring(insertPos);
-            } else {
-                // No existing use statements - find where to insert
-                // Check for namespace first
-                java.util.regex.Pattern nsPattern = java.util.regex.Pattern.compile("namespace\\s+[^;]+;\\s*");
-                java.util.regex.Matcher nsMatcher = nsPattern.matcher(text);
-
-                if (nsMatcher.find()) {
-                    // Insert after namespace declaration
-                    int insertPos = nsMatcher.end();
-                    newText = text.substring(0, insertPos) + "\n" + useStatement + "\n" + text.substring(insertPos);
-                } else {
-                    // No namespace - insert after <?php tag
-                    java.util.regex.Pattern phpTagPattern = java.util.regex.Pattern.compile("<\\?php\\s*");
-                    java.util.regex.Matcher phpMatcher = phpTagPattern.matcher(text);
-
-                    if (phpMatcher.find()) {
-                        int insertPos = phpMatcher.end();
-                        newText = text.substring(0, insertPos) + "\n" + useStatement + "\n" + text.substring(insertPos);
-                    }
-                }
-            }
-
-            if (newText != null && !newText.equals(text)) {
+            if (!newText.equals(text)) {
                 document.setText(newText);
                 PsiDocumentManager.getInstance(project).commitDocument(document);
             }
