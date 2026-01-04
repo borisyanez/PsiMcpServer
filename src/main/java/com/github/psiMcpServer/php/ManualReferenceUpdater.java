@@ -842,4 +842,186 @@ public class ManualReferenceUpdater {
         }
         return null;
     }
+
+    /**
+     * Update require/include statements in a file that reference the moved file.
+     *
+     * @param phpFile The file to update
+     * @param oldFileName The old file name (e.g., "GlobalCart.php")
+     * @param oldRelativePath The old path relative to project (e.g., "src/GlobalCart.php")
+     * @param newRelativePath The new path relative to project (e.g., "src/Entities/GlobalCart.php")
+     * @return Number of require/include statements updated
+     */
+    public int updateRequireIncludePaths(PhpFile phpFile, String oldFileName, String oldRelativePath, String newRelativePath) {
+        final int[] updatedCount = {0};
+
+        WriteCommandAction.runWriteCommandAction(project, () -> {
+            try {
+                com.intellij.openapi.vfs.VirtualFile vFile = phpFile.getVirtualFile();
+                if (vFile == null) return;
+
+                String text;
+                try {
+                    text = new String(vFile.contentsToByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+                } catch (Exception e) {
+                    text = phpFile.getText();
+                }
+
+                // Get the directory of this file relative to project root
+                String thisFilePath = vFile.getPath();
+                String projectPath = project.getBasePath();
+                if (projectPath == null) return;
+
+                String thisFileRelDir = "";
+                if (thisFilePath.startsWith(projectPath)) {
+                    String relPath = thisFilePath.substring(projectPath.length());
+                    if (relPath.startsWith("/")) relPath = relPath.substring(1);
+                    int lastSlash = relPath.lastIndexOf('/');
+                    if (lastSlash > 0) {
+                        thisFileRelDir = relPath.substring(0, lastSlash);
+                    }
+                }
+
+                // Calculate the old and new paths relative to this file's directory
+                String oldPathFromThisFile = calculateRelativePath(thisFileRelDir, oldRelativePath);
+                String newPathFromThisFile = calculateRelativePath(thisFileRelDir, newRelativePath);
+
+                // Patterns to match require/include statements
+                // Match: require|require_once|include|include_once followed by path containing the filename
+                String newText = text;
+
+                // Pattern for __DIR__ . '/path/file.php' style
+                // Example: require_once __DIR__ . '/GlobalCart.php';
+                java.util.regex.Pattern dirPattern = java.util.regex.Pattern.compile(
+                    "(require|require_once|include|include_once)\\s*\\(?\\s*__DIR__\\s*\\.\\s*(['\"])([^'\"]*" +
+                    java.util.regex.Pattern.quote(oldFileName) + ")\\2"
+                );
+                java.util.regex.Matcher dirMatcher = dirPattern.matcher(newText);
+                StringBuffer sb = new StringBuffer();
+                while (dirMatcher.find()) {
+                    String keyword = dirMatcher.group(1);
+                    String quote = dirMatcher.group(2);
+                    String path = dirMatcher.group(3);
+
+                    // Calculate what the new path should be
+                    String updatedPath = updatePathForMove(path, oldFileName, oldPathFromThisFile, newPathFromThisFile);
+                    if (updatedPath != null && !updatedPath.equals(path)) {
+                        dirMatcher.appendReplacement(sb, keyword + " __DIR__ . " + quote + updatedPath + quote);
+                        updatedCount[0]++;
+                    }
+                }
+                dirMatcher.appendTail(sb);
+                newText = sb.toString();
+
+                // Pattern for dirname(__FILE__) . '/path/file.php' style
+                java.util.regex.Pattern dirnamePattern = java.util.regex.Pattern.compile(
+                    "(require|require_once|include|include_once)\\s*\\(?\\s*dirname\\s*\\(\\s*__FILE__\\s*\\)\\s*\\.\\s*(['\"])([^'\"]*" +
+                    java.util.regex.Pattern.quote(oldFileName) + ")\\2"
+                );
+                java.util.regex.Matcher dirnameMatcher = dirnamePattern.matcher(newText);
+                sb = new StringBuffer();
+                while (dirnameMatcher.find()) {
+                    String keyword = dirnameMatcher.group(1);
+                    String quote = dirnameMatcher.group(2);
+                    String path = dirnameMatcher.group(3);
+
+                    String updatedPath = updatePathForMove(path, oldFileName, oldPathFromThisFile, newPathFromThisFile);
+                    if (updatedPath != null && !updatedPath.equals(path)) {
+                        dirnameMatcher.appendReplacement(sb, keyword + " dirname(__FILE__) . " + quote + updatedPath + quote);
+                        updatedCount[0]++;
+                    }
+                }
+                dirnameMatcher.appendTail(sb);
+                newText = sb.toString();
+
+                // Write changes if any
+                if (!newText.equals(text)) {
+                    vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+            } catch (Exception e) {
+                com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
+                    .error("Failed to update require/include paths", e);
+            }
+        });
+
+        return updatedCount[0];
+    }
+
+    /**
+     * Calculate relative path from one directory to another file.
+     */
+    private String calculateRelativePath(String fromDir, String toFilePath) {
+        if (fromDir.isEmpty()) {
+            return "/" + toFilePath;
+        }
+
+        String[] fromParts = fromDir.split("/");
+        String[] toParts = toFilePath.split("/");
+
+        // Find common prefix
+        int commonLength = 0;
+        for (int i = 0; i < Math.min(fromParts.length, toParts.length - 1); i++) {
+            if (fromParts[i].equals(toParts[i])) {
+                commonLength++;
+            } else {
+                break;
+            }
+        }
+
+        // Build relative path
+        StringBuilder result = new StringBuilder();
+        result.append("/");
+
+        // Go up for each remaining directory in fromDir
+        for (int i = commonLength; i < fromParts.length; i++) {
+            result.append("../");
+        }
+
+        // Go down to target
+        for (int i = commonLength; i < toParts.length; i++) {
+            if (i > commonLength) result.append("/");
+            result.append(toParts[i]);
+        }
+
+        return result.toString();
+    }
+
+    /**
+     * Update a path string for a file move.
+     *
+     * @param currentPath The current path in the require/include (e.g., "/GlobalCart.php")
+     * @param oldFileName The old filename (e.g., "GlobalCart.php")
+     * @param oldRelPath The old relative path from this file (e.g., "/GlobalCart.php")
+     * @param newRelPath The new relative path from this file (e.g., "/Entities/GlobalCart.php")
+     * @return The updated path, or null if no update needed
+     */
+    private String updatePathForMove(String currentPath, String oldFileName, String oldRelPath, String newRelPath) {
+        // Normalize paths for comparison
+        String normalizedCurrent = currentPath.replace("\\", "/");
+        String normalizedOld = oldRelPath.replace("\\", "/");
+
+        // Check if current path points to the old location
+        // Handle both exact match and path ending with the filename
+        if (normalizedCurrent.equals(normalizedOld) ||
+            normalizedCurrent.endsWith("/" + oldFileName) ||
+            normalizedCurrent.equals("/" + oldFileName)) {
+
+            // Simple case: just the filename with /
+            if (normalizedCurrent.equals("/" + oldFileName)) {
+                return newRelPath;
+            }
+
+            // Path with same structure - replace the ending
+            if (normalizedCurrent.endsWith("/" + oldFileName)) {
+                String prefix = normalizedCurrent.substring(0, normalizedCurrent.length() - oldFileName.length() - 1);
+                // Check if this prefix matches the old path's directory
+                String oldDir = normalizedOld.substring(0, normalizedOld.lastIndexOf('/'));
+                if (prefix.equals(oldDir) || prefix.isEmpty() || prefix.equals("/")) {
+                    return newRelPath;
+                }
+            }
+        }
+
+        return null;
+    }
 }

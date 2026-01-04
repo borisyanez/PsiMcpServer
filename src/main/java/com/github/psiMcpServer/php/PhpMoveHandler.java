@@ -117,9 +117,13 @@ public class PhpMoveHandler {
                 updatedCount += internalUpdates;
             }
 
-            // Stage 6: Update all external references (other files referencing this class)
+            // Stage 5: Update all external references (other files referencing this class)
             reportProgress(indicator, "Updating external references...", className);
             updatedCount += updateReferences(references, oldFqn, newFqn);
+
+            // Stage 6: Update require/include statements that reference the moved file
+            reportProgress(indicator, "Updating require/include paths...", className);
+            updatedCount += updateRequireIncludePaths(sourceFile, movedFile, className);
 
             return MoveResult.success(
                 "Moved " + className + " to " + newNamespace,
@@ -311,5 +315,102 @@ public class PhpMoveHandler {
 
     private <T> T runReadAction(Computable<T> computable) {
         return ApplicationManager.getApplication().runReadAction(computable);
+    }
+
+    /**
+     * Update require/include statements in all project files that reference the moved file.
+     *
+     * @param originalFile The original source file (before move)
+     * @param movedFile The file after being moved
+     * @param className The class name (used for filename)
+     * @return Number of require/include statements updated
+     */
+    private int updateRequireIncludePaths(PsiFile originalFile, PsiFile movedFile, String className) {
+        int[] count = {0};
+
+        // Calculate old and new paths relative to project
+        String projectPath = project.getBasePath();
+        if (projectPath == null) return 0;
+
+        String oldFileName = className + ".php";
+
+        // Get the old path from the original file's directory info
+        String oldRelativePath = runReadAction(() -> {
+            VirtualFile vFile = originalFile.getOriginalFile().getVirtualFile();
+            if (vFile == null) return null;
+            String fullPath = vFile.getPath();
+            if (fullPath.startsWith(projectPath)) {
+                String rel = fullPath.substring(projectPath.length());
+                if (rel.startsWith("/")) rel = rel.substring(1);
+                return rel;
+            }
+            return null;
+        });
+
+        // Get the new path from the moved file
+        String newRelativePath = runReadAction(() -> {
+            VirtualFile vFile = movedFile.getVirtualFile();
+            if (vFile == null) return null;
+            String fullPath = vFile.getPath();
+            if (fullPath.startsWith(projectPath)) {
+                String rel = fullPath.substring(projectPath.length());
+                if (rel.startsWith("/")) rel = rel.substring(1);
+                return rel;
+            }
+            return null;
+        });
+
+        if (oldRelativePath == null || newRelativePath == null) {
+            return 0;
+        }
+
+        // Find all PHP files in the project
+        VirtualFile projectDir = project.getBaseDir();
+        if (projectDir == null) return 0;
+
+        final String finalOldPath = oldRelativePath;
+        final String finalNewPath = newRelativePath;
+
+        // First, collect all PHP files in a read action
+        List<PhpFile> phpFiles = runReadAction(() -> {
+            List<PhpFile> files = new ArrayList<>();
+            collectPhpFiles(projectDir, movedFile.getVirtualFile(), files::add);
+            return files;
+        });
+
+        // Then update each file (write actions happen inside updateRequireIncludePaths)
+        for (PhpFile phpFile : phpFiles) {
+            int updated = referenceUpdater.updateRequireIncludePaths(
+                phpFile,
+                oldFileName,
+                finalOldPath,
+                finalNewPath
+            );
+            count[0] += updated;
+        }
+
+        return count[0];
+    }
+
+    /**
+     * Recursively collect PHP files from a directory, excluding the moved file.
+     */
+    private void collectPhpFiles(VirtualFile dir, VirtualFile excludeFile, java.util.function.Consumer<PhpFile> consumer) {
+        if (dir == null || !dir.isDirectory()) return;
+
+        for (VirtualFile child : dir.getChildren()) {
+            if (child.isDirectory()) {
+                // Skip common non-source directories
+                String name = child.getName();
+                if (!name.equals("vendor") && !name.equals("node_modules") && !name.startsWith(".")) {
+                    collectPhpFiles(child, excludeFile, consumer);
+                }
+            } else if (child.getName().endsWith(".php") && !child.equals(excludeFile)) {
+                PsiFile psiFile = PsiManager.getInstance(project).findFile(child);
+                if (psiFile instanceof PhpFile phpFile) {
+                    consumer.accept(phpFile);
+                }
+            }
+        }
     }
 }
