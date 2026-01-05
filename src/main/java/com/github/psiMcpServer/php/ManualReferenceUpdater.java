@@ -251,6 +251,7 @@ public class ManualReferenceUpdater {
         WriteCommandAction.runWriteCommandAction(project, () -> {
             // First, collect information about what needs to be updated using PSI
             java.util.List<String> globalClassesToPrefix = new java.util.ArrayList<>();
+            java.util.List<String> useStatementsToAdd = new java.util.ArrayList<>();
 
             movedFile.accept(new PsiRecursiveElementVisitor() {
                 @Override
@@ -270,6 +271,17 @@ public class ManualReferenceUpdater {
 
                                     if (isGlobalNamespaceClass && !globalClassesToPrefix.contains(refName) && !isPrimitiveType(refName)) {
                                         globalClassesToPrefix.add(refName);
+                                    }
+                                }
+                            }
+
+                            // Check for same-namespace references that need use statements
+                            if (!oldNamespace.isEmpty() && !isBuiltInClass(refName)) {
+                                if (refFqn.equals(oldNamespace + "\\" + refName) ||
+                                    refFqn.equals("\\" + oldNamespace + "\\" + refName)) {
+                                    String fullClassName = oldNamespace + "\\" + refName;
+                                    if (!useStatementsToAdd.contains(fullClassName)) {
+                                        useStatementsToAdd.add(fullClassName);
                                     }
                                 }
                             }
@@ -309,7 +321,23 @@ public class ManualReferenceUpdater {
                     newText = sb.toString();
                 }
 
-                // 2. Add or update namespace declaration
+                // 2. Add use statements for classes that need them
+                for (String fqn : useStatementsToAdd) {
+                    // Check if already exists in current text
+                    String normalizedFqn = fqn.startsWith("\\") ? fqn.substring(1) : fqn;
+                    String escapedFqn = java.util.regex.Pattern.quote(normalizedFqn);
+                    java.util.regex.Pattern existingUsePattern = java.util.regex.Pattern.compile(
+                        "use\\s+\\\\?" + escapedFqn + "\\s*;"
+                    );
+
+                    if (!existingUsePattern.matcher(newText).find()) {
+                        String useStatement = "use " + normalizedFqn + ";";
+                        newText = insertUseStatement(newText, useStatement);
+                        updatedCount[0]++;
+                    }
+                }
+
+                // 3. Add or update namespace declaration
                 if (newNamespace != null && !newNamespace.isEmpty()) {
                     java.util.regex.Pattern nsPattern = java.util.regex.Pattern.compile(
                         "(namespace\\s+)[A-Za-z_\\\\][A-Za-z0-9_\\\\]*(\\s*;)"
