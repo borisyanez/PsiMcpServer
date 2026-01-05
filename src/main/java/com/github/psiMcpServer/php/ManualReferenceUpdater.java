@@ -514,23 +514,70 @@ public class ManualReferenceUpdater {
             return text.substring(0, insertPos) + "\n\n" + useStatement + text.substring(insertPos);
         }
 
-        // No namespace - insert after <?php tag and any opening docblock
+        // No namespace - insert after <?php tag, docblocks, and declare statements
         java.util.regex.Pattern phpTagPattern = java.util.regex.Pattern.compile("<\\?php\\s*");
         java.util.regex.Matcher phpMatcher = phpTagPattern.matcher(fileLevelText);
 
         if (phpMatcher.find()) {
             int insertPos = phpMatcher.end();
+            String remaining = fileLevelText.substring(insertPos);
 
-            // Check if there's a docblock comment immediately after <?php
-            // Pattern matches /** ... */ style comments
-            String afterPhpTag = fileLevelText.substring(insertPos);
-            java.util.regex.Pattern docBlockPattern = java.util.regex.Pattern.compile(
-                "^(\\s*/\\*\\*[\\s\\S]*?\\*/\\s*)"
-            );
-            java.util.regex.Matcher docMatcher = docBlockPattern.matcher(afterPhpTag);
-            if (docMatcher.find()) {
-                // Skip past the docblock
-                insertPos += docMatcher.end();
+            // Skip past any combination of comments and declare statements
+            boolean foundMore = true;
+            while (foundMore) {
+                foundMore = false;
+
+                // Skip whitespace
+                java.util.regex.Pattern wsPattern = java.util.regex.Pattern.compile("^\\s+");
+                java.util.regex.Matcher wsMatcher = wsPattern.matcher(remaining);
+                if (wsMatcher.find()) {
+                    insertPos += wsMatcher.end();
+                    remaining = fileLevelText.substring(insertPos);
+                }
+
+                // Skip docblock comments /** ... */
+                java.util.regex.Pattern docBlockPattern = java.util.regex.Pattern.compile(
+                    "^/\\*\\*[\\s\\S]*?\\*/\\s*"
+                );
+                java.util.regex.Matcher docMatcher = docBlockPattern.matcher(remaining);
+                if (docMatcher.find()) {
+                    insertPos += docMatcher.end();
+                    remaining = fileLevelText.substring(insertPos);
+                    foundMore = true;
+                }
+
+                // Skip single-line comments // ...
+                java.util.regex.Pattern singleCommentPattern = java.util.regex.Pattern.compile(
+                    "^//[^\\n]*\\n\\s*"
+                );
+                java.util.regex.Matcher singleMatcher = singleCommentPattern.matcher(remaining);
+                if (singleMatcher.find()) {
+                    insertPos += singleMatcher.end();
+                    remaining = fileLevelText.substring(insertPos);
+                    foundMore = true;
+                }
+
+                // Skip block comments /* ... */
+                java.util.regex.Pattern blockCommentPattern = java.util.regex.Pattern.compile(
+                    "^/\\*[\\s\\S]*?\\*/\\s*"
+                );
+                java.util.regex.Matcher blockMatcher = blockCommentPattern.matcher(remaining);
+                if (blockMatcher.find()) {
+                    insertPos += blockMatcher.end();
+                    remaining = fileLevelText.substring(insertPos);
+                    foundMore = true;
+                }
+
+                // Skip declare statements: declare(strict_types=1);
+                java.util.regex.Pattern declarePattern = java.util.regex.Pattern.compile(
+                    "^declare\\s*\\([^)]+\\)\\s*;\\s*"
+                );
+                java.util.regex.Matcher declareMatcher = declarePattern.matcher(remaining);
+                if (declareMatcher.find()) {
+                    insertPos += declareMatcher.end();
+                    remaining = fileLevelText.substring(insertPos);
+                    foundMore = true;
+                }
             }
 
             return text.substring(0, insertPos) + "\n" + useStatement + "\n" + text.substring(insertPos);
@@ -725,13 +772,16 @@ public class ManualReferenceUpdater {
     }
 
     /**
-     * Check if a name is a PHP primitive type (should never be prefixed with \).
+     * Check if a name is a PHP primitive type or special keyword (should never be prefixed with \).
      */
     private boolean isPrimitiveType(String name) {
         java.util.Set<String> primitives = java.util.Set.of(
+            // Primitive types
             "array", "bool", "boolean", "callable", "false", "float", "int", "integer",
             "iterable", "mixed", "never", "null", "numeric", "object", "resource",
-            "string", "true", "void"
+            "string", "true", "void",
+            // Special class references
+            "self", "static", "parent"
         );
         return primitives.contains(name.toLowerCase());
     }
