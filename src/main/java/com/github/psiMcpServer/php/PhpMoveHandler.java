@@ -125,6 +125,10 @@ public class PhpMoveHandler {
             reportProgress(indicator, "Updating require/include paths...", className);
             updatedCount += updateRequireIncludePaths(sourceFile, movedFile, className);
 
+            // Stage 7: Clean up duplicate use statements across the project
+            reportProgress(indicator, "Cleaning up duplicate imports...", className);
+            updatedCount += cleanupDuplicateImports(className);
+
             return MoveResult.success(
                 "Moved " + className + " to " + newNamespace,
                 newFqn,
@@ -412,5 +416,37 @@ public class PhpMoveHandler {
                 }
             }
         }
+    }
+
+    /**
+     * Clean up duplicate use statements across the project.
+     * Removes old global namespace imports (e.g., "use Cart;") from files that
+     * also have the new namespaced import (e.g., "use Entities\Cart;").
+     *
+     * @param className The short class name that was moved
+     * @return Number of files cleaned up
+     */
+    private int cleanupDuplicateImports(String className) {
+        int[] count = {0};
+
+        VirtualFile projectDir = project.getBaseDir();
+        if (projectDir == null) return 0;
+
+        // Collect all PHP files in read action
+        List<PhpFile> phpFiles = runReadAction(() -> {
+            List<PhpFile> files = new ArrayList<>();
+            collectPhpFiles(projectDir, null, files::add);
+            return files;
+        });
+
+        // Clean up each file
+        for (PhpFile phpFile : phpFiles) {
+            boolean cleaned = referenceUpdater.cleanupDuplicateUseStatements(phpFile, className);
+            if (cleaned) {
+                count[0]++;
+            }
+        }
+
+        return count[0];
     }
 }

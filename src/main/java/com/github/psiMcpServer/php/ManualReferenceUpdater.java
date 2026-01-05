@@ -196,6 +196,27 @@ public class ManualReferenceUpdater {
     }
 
     /**
+     * Remove use statements for a specific class name (short name, not FQN) from text.
+     * This removes use statements for the class WITHOUT a namespace prefix,
+     * but keeps namespaced imports (e.g., removes "use Cart;" but keeps "use Entities\Cart;").
+     * @param text The text to process
+     * @param className The short class name to remove use statements for
+     * @return The modified text with use statements removed
+     */
+    private String removeUseStatementByClassNameFromText(String text, String className) {
+        // Pattern to match use statements for the class name WITHOUT namespace
+        // Matches: use ClassName; or use ClassName as Alias;
+        // Does NOT match: use Namespace\ClassName; (these have a backslash before the class name)
+        String escapedClassName = java.util.regex.Pattern.quote(className);
+        java.util.regex.Pattern usePattern = java.util.regex.Pattern.compile(
+            "^[ \\t]*use\\s+\\\\?" + escapedClassName + "(?:\\s+as\\s+[A-Za-z_][A-Za-z0-9_]*)?\\s*;[ \\t]*\\r?\\n?",
+            java.util.regex.Pattern.MULTILINE
+        );
+
+        return usePattern.matcher(text).replaceAll("");
+    }
+
+    /**
      * Add a use statement to a file if not present.
      * Uses document-level text manipulation for reliability.
      */
@@ -213,16 +234,30 @@ public class ManualReferenceUpdater {
                 String normalizedFqn = fqn.startsWith("\\") ? fqn.substring(1) : fqn;
                 String useStatement = "use " + normalizedFqn + ";";
 
+                // Extract the short class name from the FQN
+                String shortName = getShortName(normalizedFqn);
+
+                // First, remove any existing use statements for this class name
+                // This prevents duplicate imports like "use Cart;" and "use Entities\Cart;"
+                text = removeUseStatementByClassNameFromText(text, shortName);
+
                 // Check if there's already a use statement with this FQN (text-based check with regex)
                 String escapedFqn = java.util.regex.Pattern.quote(normalizedFqn);
                 java.util.regex.Pattern existingUsePattern = java.util.regex.Pattern.compile(
                     "use\\s+\\\\?" + escapedFqn + "\\s*;"
                 );
-                if (existingUsePattern.matcher(text).find()) return;
+                if (existingUsePattern.matcher(text).find()) {
+                    // If we removed something but the FQN already exists, just update the document
+                    if (!text.equals(document.getText())) {
+                        document.setText(text);
+                        PsiDocumentManager.getInstance(project).commitDocument(document);
+                    }
+                    return;
+                }
 
                 String newText = insertUseStatement(text, useStatement);
 
-                if (!newText.equals(text)) {
+                if (!newText.equals(document.getText())) {
                     document.setText(newText);
                     PsiDocumentManager.getInstance(project).commitDocument(document);
                 }
@@ -310,7 +345,23 @@ public class ManualReferenceUpdater {
                         long doubleQuotes = before.chars().filter(c -> c == '"').count();
                         boolean inString = (singleQuotes % 2 == 1) || (doubleQuotes % 2 == 1);
 
-                        if (!inString) {
+                        // Check if this is a class/interface/trait/enum declaration
+                        // Look for keywords before the class name: "class ClassName", "interface ClassName", etc.
+                        boolean isDeclaration = false;
+                        if (pos > 0) {
+                            String beforeMatch = newText.substring(Math.max(0, pos - 50), pos);
+                            // Match patterns like "class ", "interface ", "trait ", "enum " followed by the class name
+                            // Use DOTALL mode so . matches newlines
+                            java.util.regex.Pattern declPattern = java.util.regex.Pattern.compile(
+                                ".*\\b(?:class|interface|trait|enum)\\s+$",
+                                java.util.regex.Pattern.DOTALL
+                            );
+                            if (declPattern.matcher(beforeMatch).matches()) {
+                                isDeclaration = true;
+                            }
+                        }
+
+                        if (!inString && !isDeclaration) {
                             m.appendReplacement(sb, "\\\\" + className);
                             updatedCount[0]++;
                         } else {
@@ -460,7 +511,23 @@ public class ManualReferenceUpdater {
                         long doubleQuotes = before.chars().filter(c -> c == '"').count();
                         boolean inString = (singleQuotes % 2 == 1) || (doubleQuotes % 2 == 1);
 
-                        if (!inString) {
+                        // Check if this is a class/interface/trait/enum declaration
+                        // Look for keywords before the class name: "class ClassName", "interface ClassName", etc.
+                        boolean isDeclaration = false;
+                        if (pos > 0) {
+                            String beforeMatch = newText.substring(Math.max(0, pos - 50), pos);
+                            // Match patterns like "class ", "interface ", "trait ", "enum " followed by the class name
+                            // Use DOTALL mode so . matches newlines
+                            java.util.regex.Pattern declPattern = java.util.regex.Pattern.compile(
+                                ".*\\b(?:class|interface|trait|enum)\\s+$",
+                                java.util.regex.Pattern.DOTALL
+                            );
+                            if (declPattern.matcher(beforeMatch).matches()) {
+                                isDeclaration = true;
+                            }
+                        }
+
+                        if (!inString && !isDeclaration) {
                             m.appendReplacement(sb, "\\\\" + className);
                             updatedCount[0]++;
                         } else {
@@ -1148,5 +1215,71 @@ public class ManualReferenceUpdater {
         }
 
         return null;
+    }
+
+    /**
+     * Clean up duplicate use statements in a file.
+     * Removes old global namespace imports (e.g., "use Cart;") if a namespaced
+     * version exists (e.g., "use Entities\Cart;").
+     *
+     * @param phpFile The PHP file to clean up
+     * @param className The short class name to check for duplicates
+     * @return true if duplicates were found and removed
+     */
+    public boolean cleanupDuplicateUseStatements(PhpFile phpFile, String className) {
+        final boolean[] cleaned = {false};
+
+        WriteCommandAction.runWriteCommandAction(project, () -> {
+            try {
+                com.intellij.openapi.vfs.VirtualFile vFile = phpFile.getVirtualFile();
+                if (vFile == null) return;
+
+                String text;
+                try {
+                    text = new String(vFile.contentsToByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+                } catch (Exception e) {
+                    return;
+                }
+
+                String escapedClassName = java.util.regex.Pattern.quote(className);
+
+                // Check if file has BOTH:
+                // 1. A global namespace import: use ClassName;
+                // 2. A namespaced import: use Namespace\ClassName;
+                java.util.regex.Pattern globalImportPattern = java.util.regex.Pattern.compile(
+                    "^[ \\t]*use\\s+\\\\?" + escapedClassName + "\\s*;",
+                    java.util.regex.Pattern.MULTILINE
+                );
+
+                // Pattern to match namespaced imports: use Namespace\ClassName; or use Foo\Bar\ClassName;
+                // Simplified: just check if there's a backslash before the class name
+                java.util.regex.Pattern namespacedImportPattern = java.util.regex.Pattern.compile(
+                    "^[ \\t]*use\\s+.+\\\\" + escapedClassName + "\\s*;",
+                    java.util.regex.Pattern.MULTILINE
+                );
+
+                boolean hasGlobalImport = globalImportPattern.matcher(text).find();
+                boolean hasNamespacedImport = namespacedImportPattern.matcher(text).find();
+
+                // Only remove global import if namespaced one exists
+                if (hasGlobalImport && hasNamespacedImport) {
+                    // Remove the global namespace import
+                    String newText = globalImportPattern.matcher(text).replaceAll("");
+
+                    // Also clean up extra blank lines that might be left behind
+                    newText = newText.replaceAll("\\n\\n\\n+", "\n\n");
+
+                    if (!newText.equals(text)) {
+                        vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        cleaned[0] = true;
+                    }
+                }
+            } catch (Exception e) {
+                com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
+                    .error("Failed to cleanup duplicate use statements", e);
+            }
+        });
+
+        return cleaned[0];
     }
 }
