@@ -26,6 +26,7 @@ public final class PsiMcpSettings implements PersistentStateComponent<PsiMcpSett
         public String logLevel = "INFO";
         public boolean searchInComments = true;
         public boolean searchInStrings = true;
+        public boolean applyCodeStyleFixes = true;  // Apply code style fixes after PHP class moves
     }
 
     private State myState = new State();
@@ -91,5 +92,13 @@ public final class PsiMcpSettings implements PersistentStateComponent<PsiMcpSett
 
     public void setSearchInStrings(boolean value) {
         myState.searchInStrings = value;
+    }
+
+    public boolean isApplyCodeStyleFixes() {
+        return myState.applyCodeStyleFixes;
+    }
+
+    public void setApplyCodeStyleFixes(boolean value) {
+        myState.applyCodeStyleFixes = value;
     }
 }

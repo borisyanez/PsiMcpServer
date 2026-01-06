@@ -1,5 +1,6 @@
 package com.github.psiMcpServer.php;
 
+import com.github.psiMcpServer.settings.PsiMcpSettings;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.progress.ProgressIndicator;
@@ -130,9 +131,9 @@ public class PhpMoveHandler {
             reportProgress(indicator, "Cleaning up duplicate imports...", className);
             updatedCount += cleanupDuplicateImports(className);
 
-            // Stage 8: Apply code style fixes using PsiPhpCodeFixer if available
+            // Stage 8: Apply code style fixes using PsiPhpCodeFixer if available and enabled
             int codeStyleFixes = 0;
-            if (PhpCodeFixerHelper.isPluginAvailable()) {
+            if (PsiMcpSettings.getInstance().isApplyCodeStyleFixes() && PhpCodeFixerHelper.isPluginAvailable()) {
                 reportProgress(indicator, "Applying code style fixes...", className);
                 PhpCodeFixerHelper.FixResult fixResult = PhpCodeFixerHelper.fixFile(project, movedFile);
                 if (fixResult != null && fixResult.success()) {

@@ -21,6 +21,7 @@ public class PsiMcpSettingsComponent {
         new String[]{"DEBUG", "INFO", "WARN", "ERROR"});
     private final JBCheckBox searchInCommentsCheckbox = new JBCheckBox("Search in comments during refactoring");
     private final JBCheckBox searchInStringsCheckbox = new JBCheckBox("Search in strings during refactoring");
+    private final JBCheckBox applyCodeStyleFixesCheckbox = new JBCheckBox("Apply code style fixes after PHP class moves (requires PsiPhpCodeFixer)");
 
     public PsiMcpSettingsComponent() {
         mainPanel = FormBuilder.createFormBuilder()
@@ -32,6 +33,8 @@ public class PsiMcpSettingsComponent {
             .addSeparator()
             .addComponent(searchInCommentsCheckbox, 1)
             .addComponent(searchInStringsCheckbox, 1)
+            .addSeparator()
+            .addComponent(applyCodeStyleFixesCheckbox, 1)
             .addComponentFillVertically(new JPanel(), 0)
             .getPanel();
     }
@@ -95,5 +98,13 @@ public class PsiMcpSettingsComponent {
 
     public void setSearchInStrings(boolean value) {
         searchInStringsCheckbox.setSelected(value);
+    }
+
+    public boolean getApplyCodeStyleFixes() {
+        return applyCodeStyleFixesCheckbox.isSelected();
+    }
+
+    public void setApplyCodeStyleFixes(boolean value) {
+        applyCodeStyleFixesCheckbox.setSelected(value);
     }
 }

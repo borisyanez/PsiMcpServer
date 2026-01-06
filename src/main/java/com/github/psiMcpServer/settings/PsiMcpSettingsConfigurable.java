@@ -35,7 +35,8 @@ public final class PsiMcpSettingsConfigurable implements Configurable {
             || component.getEnableLogging() != settings.isEnableLogging()
             || !Objects.equals(component.getLogLevel(), settings.getLogLevel())
             || component.getSearchInComments() != settings.isSearchInComments()
-            || component.getSearchInStrings() != settings.isSearchInStrings();
+            || component.getSearchInStrings() != settings.isSearchInStrings()
+            || component.getApplyCodeStyleFixes() != settings.isApplyCodeStyleFixes();
     }
 
     @Override
@@ -47,6 +48,7 @@ public final class PsiMcpSettingsConfigurable implements Configurable {
         settings.setLogLevel(component.getLogLevel());
         settings.setSearchInComments(component.getSearchInComments());
         settings.setSearchInStrings(component.getSearchInStrings());
+        settings.setApplyCodeStyleFixes(component.getApplyCodeStyleFixes());
     }
 
     @Override
@@ -58,6 +60,7 @@ public final class PsiMcpSettingsConfigurable implements Configurable {
         component.setLogLevel(settings.getLogLevel());
         component.setSearchInComments(settings.isSearchInComments());
         component.setSearchInStrings(settings.isSearchInStrings());
+        component.setApplyCodeStyleFixes(settings.isApplyCodeStyleFixes());
     }
 
     @Override
