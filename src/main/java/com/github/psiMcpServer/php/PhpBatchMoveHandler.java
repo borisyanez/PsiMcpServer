@@ -5,6 +5,7 @@ import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.vfs.VirtualFileManager;
 import com.intellij.psi.PsiDirectory;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiManager;
@@ -303,6 +304,9 @@ public class PhpBatchMoveHandler {
             indicator.setFraction(1.0);
             indicator.setText("Batch move completed");
         }
+
+        // Final VFS refresh to ensure all changes are synced
+        VirtualFileManager.getInstance().syncRefresh();
 
         return BatchMoveResult.success(files.size(), movedCount, results);
     }

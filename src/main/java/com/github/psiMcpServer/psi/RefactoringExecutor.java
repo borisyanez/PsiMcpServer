@@ -4,6 +4,7 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.vfs.VirtualFileManager;
 import com.intellij.psi.*;
 import com.intellij.refactoring.RefactoringFactory;
 import com.intellij.refactoring.RenameRefactoring;
@@ -56,6 +57,7 @@ public class RefactoringExecutor {
                             .createRename(element, newName, searchInComments, searchInStrings);
                         UsageInfo[] usages = rename.findUsages();
                         rename.doRefactoring(usages);
+                        refreshVfs();
                         future.complete(RefactoringResult.success(
                             "Renamed to '" + newName + "'. Updated " + usages.length + " usages."
                         ));
@@ -106,6 +108,7 @@ public class RefactoringExecutor {
                             ? movedFile.getVirtualFile().getPath()
                             : targetDirectory.getVirtualFile().getPath() + "/" + file.getName();
 
+                        refreshVfs();
                         future.complete(RefactoringResult.success(
                             "Moved file to: " + newPath
                         ));
@@ -150,6 +153,7 @@ public class RefactoringExecutor {
                                 deletedCount++;
                             }
                         }
+                        refreshVfs();
                         future.complete(RefactoringResult.success(
                             "Deleted " + deletedCount + " element(s)"
                         ));
@@ -181,6 +185,14 @@ public class RefactoringExecutor {
         } catch (ExecutionException e) {
             return RefactoringResult.failure("Operation failed: " + e.getCause().getMessage());
         }
+    }
+
+    /**
+     * Refresh the Virtual File System to sync memory with disk.
+     * This prevents "file out of sync" warnings after PSI operations.
+     */
+    private void refreshVfs() {
+        VirtualFileManager.getInstance().syncRefresh();
     }
 
     /**

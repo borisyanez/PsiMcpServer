@@ -6,6 +6,7 @@ import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.vfs.VirtualFileManager;
 import com.intellij.psi.*;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.searches.ReferencesSearch;
@@ -128,6 +129,9 @@ public class PhpMoveHandler {
             // Stage 7: Clean up duplicate use statements across the project
             reportProgress(indicator, "Cleaning up duplicate imports...", className);
             updatedCount += cleanupDuplicateImports(className);
+
+            // Refresh VFS to sync memory with disk (prevents "file out of sync" warnings)
+            VirtualFileManager.getInstance().syncRefresh();
 
             return MoveResult.success(
                 "Moved " + className + " to " + newNamespace,
