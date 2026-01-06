@@ -294,7 +294,10 @@ public class ManualReferenceUpdater {
         final int[] updatedCount = {0};
 
         WriteCommandAction.runWriteCommandAction(project, () -> {
-            // First, collect information about what needs to be updated using PSI
+            // First, find the main class being moved (to exclude from prefixing)
+            String mainClassName = findMainClassName(movedFile);
+
+            // Collect information about what needs to be updated using PSI
             java.util.List<String> globalClassesToPrefix = new java.util.ArrayList<>();
             java.util.List<String> useStatementsToAdd = new java.util.ArrayList<>();
 
@@ -307,6 +310,12 @@ public class ManualReferenceUpdater {
                         String refText = classRef.getText();
 
                         if (refName != null && refFqn != null && refText != null) {
+                            // Skip references to the class being moved itself
+                            // After the move, unqualified ClassName refers to itself in the new namespace
+                            if (refName.equals(mainClassName)) {
+                                return;
+                            }
+
                             // Handle moving FROM global namespace to a different namespace
                             if (oldNamespace.isEmpty() && !newNamespace.isEmpty()) {
                                 // Skip if already fully qualified
@@ -461,7 +470,10 @@ public class ManualReferenceUpdater {
         final int[] updatedCount = {0};
 
         WriteCommandAction.runWriteCommandAction(project, () -> {
-            // First, collect information about what needs to be updated using PSI
+            // First, find the main class being moved (to exclude from prefixing)
+            String mainClassName = findMainClassName(movedFile);
+
+            // Collect information about what needs to be updated using PSI
             java.util.List<String> globalClassesToPrefix = new java.util.ArrayList<>();
             java.util.List<String> useStatementsToAdd = new java.util.ArrayList<>();
 
@@ -474,6 +486,12 @@ public class ManualReferenceUpdater {
                         String refText = classRef.getText();
 
                         if (refName != null && refFqn != null && refText != null) {
+                            // Skip references to the class being moved itself
+                            // After the move, unqualified ClassName refers to itself in the new namespace
+                            if (refName.equals(mainClassName)) {
+                                return;
+                            }
+
                             // Handle moving FROM global namespace to a different namespace
                             if (oldNamespace.isEmpty() && !newNamespace.isEmpty()) {
                                 // Skip if already fully qualified
@@ -894,6 +912,36 @@ public class ManualReferenceUpdater {
             "self", "static", "parent"
         );
         return builtIns.contains(className);
+    }
+
+    /**
+     * Find the main class name in a PHP file.
+     * Usually the class matching the filename, or the first class found.
+     */
+    private String findMainClassName(PhpFile phpFile) {
+        String fileName = phpFile.getName();
+        String expectedClassName = fileName.endsWith(".php")
+            ? fileName.substring(0, fileName.length() - 4)
+            : fileName;
+
+        final String[] result = {null};
+        phpFile.accept(new PsiRecursiveElementVisitor() {
+            @Override
+            public void visitElement(@NotNull PsiElement element) {
+                if (element instanceof PhpClass phpClass) {
+                    String className = phpClass.getName();
+                    if (result[0] == null) {
+                        result[0] = className; // First class found
+                    }
+                    if (expectedClassName.equals(className)) {
+                        result[0] = className; // Prefer class matching filename
+                    }
+                }
+                super.visitElement(element);
+            }
+        });
+
+        return result[0];
     }
 
     /**
