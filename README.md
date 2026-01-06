@@ -11,6 +11,7 @@ An IntelliJ IDEA plugin that exposes PSI (Program Structure Interface) refactori
 - Works with all JetBrains IDEs (IntelliJ IDEA, PHPStorm, WebStorm, etc.)
 - Tool window showing server status, available tools, and PHP support indicator
 - Background task progress reporting in IDE status bar for long-running operations
+- Optional integration with PsiPhpCodeFixer plugin for automatic code style fixes after PHP class moves
 
 ## Available Tools
 
@@ -144,6 +145,16 @@ PHP class move operations display progress in the IDE status bar:
 - Displays progress as percentage with file count (e.g., "Moving PHP classes (3/10)")
 - Shows current file name being processed
 - Supports cancellation for long-running batch operations
+
+#### 7. Code Style Fixes (Optional)
+If the **PsiPhpCodeFixer** plugin is installed, automatic code style fixes are applied after moving each PHP class:
+
+- Fixes import ordering and formatting
+- Applies PSR-12 code style rules
+- Normalizes whitespace and indentation
+- Reports the number of additional fixes applied
+
+The tool window shows "Code Fixer: Available" when the plugin is detected. If not installed, this step is skipped and the move operation completes normally.
 
 ## Building
 

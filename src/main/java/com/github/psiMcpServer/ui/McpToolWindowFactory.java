@@ -1,6 +1,7 @@
 package com.github.psiMcpServer.ui;
 
 import com.github.psiMcpServer.mcp.McpServerManager;
+import com.github.psiMcpServer.php.PhpCodeFixerHelper;
 import com.github.psiMcpServer.php.PhpPluginHelper;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.wm.ToolWindow;
@@ -101,7 +102,13 @@ public class McpToolWindowFactory implements ToolWindowFactory {
             }
             status.append("<b>PHP Support:</b> ").append(phpAvailable ?
                 "<font color='green'>Available</font>" :
-                "<font color='gray'>Not Available</font>");
+                "<font color='gray'>Not Available</font>").append("<br>");
+
+            // Check if PsiPhpCodeFixer is available
+            boolean codeFixerAvailable = PhpCodeFixerHelper.isPluginAvailable();
+            status.append("<b>Code Fixer:</b> ").append(codeFixerAvailable ?
+                "<font color='green'>Available</font>" :
+                "<font color='gray'>Not Installed</font>");
             status.append("</html>");
             statusLabel.setText(status.toString());
 

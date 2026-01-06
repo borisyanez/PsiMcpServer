@@ -130,13 +130,28 @@ public class PhpMoveHandler {
             reportProgress(indicator, "Cleaning up duplicate imports...", className);
             updatedCount += cleanupDuplicateImports(className);
 
+            // Stage 8: Apply code style fixes using PsiPhpCodeFixer if available
+            int codeStyleFixes = 0;
+            if (PhpCodeFixerHelper.isPluginAvailable()) {
+                reportProgress(indicator, "Applying code style fixes...", className);
+                PhpCodeFixerHelper.FixResult fixResult = PhpCodeFixerHelper.fixFile(project, movedFile);
+                if (fixResult != null && fixResult.success()) {
+                    codeStyleFixes = fixResult.fixCount();
+                }
+            }
+
             // Refresh VFS to sync memory with disk (prevents "file out of sync" warnings)
             VirtualFileManager.getInstance().syncRefresh();
 
+            String message = "Moved " + className + " to " + newNamespace;
+            if (codeStyleFixes > 0) {
+                message += " (+" + codeStyleFixes + " code style fixes)";
+            }
+
             return MoveResult.success(
-                "Moved " + className + " to " + newNamespace,
+                message,
                 newFqn,
-                updatedCount
+                updatedCount + codeStyleFixes
             );
 
         } catch (Exception e) {
