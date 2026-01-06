@@ -243,6 +243,64 @@ public class InternalReferenceUpdateTest {
         assertThat(result).contains("Cart");
     }
 
+    @Test
+    public void testPrefixGlobalReferences_NullableTypeHints() {
+        String code = """
+            <?php
+            class Order {
+                private ?Cart $cart;
+                private ?User $user;
+
+                public function getCart(): ?Cart {
+                    return $this->cart;
+                }
+
+                public function getUser(): ?User {
+                    return $this->user;
+                }
+
+                public function setCart(?Cart $cart): void {
+                    $this->cart = $cart;
+                }
+            }
+            """;
+
+        String result = prefixGlobalNamespaceReferences(code, List.of("Cart", "User"), "App\\Entities");
+
+        // Nullable types should be prefixed correctly: ?Cart -> ?\Cart
+        assertThat(result).contains("?\\Cart");
+        assertThat(result).contains("?\\User");
+        // Should NOT have malformed ?\Cart (backslash before ?)
+        assertThat(result).doesNotContain("\\?Cart");
+        assertThat(result).doesNotContain("\\?User");
+    }
+
+    @Test
+    public void testPrefixGlobalReferences_MixedNullableAndRegular() {
+        String code = """
+            <?php
+            class Order {
+                private Cart $cart;
+                private ?User $user;
+
+                public function getCart(): Cart {
+                    return $this->cart;
+                }
+
+                public function getUser(): ?User {
+                    return $this->user;
+                }
+            }
+            """;
+
+        String result = prefixGlobalNamespaceReferences(code, List.of("Cart", "User"), "App\\Entities");
+
+        // Regular types: ClassName -> \ClassName
+        assertThat(countOccurrences(result, "\\Cart")).isEqualTo(2);
+        // Nullable types: ?ClassName -> ?\ClassName
+        assertThat(countOccurrences(result, "?\\User")).isEqualTo(2);
+    }
+
     // ========== Require/Include Path Update Tests ==========
 
     @Test
@@ -399,8 +457,9 @@ public class InternalReferenceUpdateTest {
 
         String result = code;
         for (String className : classNames) {
-            // Match class name not preceded by backslash or other identifier chars
-            String pattern = "(?<![\\\\A-Za-z0-9_])" + Pattern.quote(className) + "(?![\\\\A-Za-z0-9_])";
+            // Pattern captures optional ? for nullable types, then the class name
+            // Group 1: optional nullable marker (?)
+            String pattern = "(\\?)?(?<![\\\\A-Za-z0-9_])" + Pattern.quote(className) + "(?![\\\\A-Za-z0-9_])";
             Pattern p = Pattern.compile(pattern);
             Matcher m = p.matcher(result);
 
@@ -415,9 +474,19 @@ public class InternalReferenceUpdateTest {
                 boolean inString = (singleQuotes % 2 == 1) || (doubleQuotes % 2 == 1);
 
                 if (!inString) {
-                    m.appendReplacement(sb, "\\\\" + className);
+                    // Check if nullable type hint (group 1 is ?)
+                    String nullableMarker = m.group(1);
+                    if (nullableMarker != null) {
+                        // Nullable type: ?ClassName -> ?\ClassName
+                        m.appendReplacement(sb, "?\\\\" + className);
+                    } else {
+                        // Regular type: ClassName -> \ClassName
+                        m.appendReplacement(sb, "\\\\" + className);
+                    }
                 } else {
-                    m.appendReplacement(sb, className);
+                    // Keep original (with nullable marker if present)
+                    String nullableMarker = m.group(1);
+                    m.appendReplacement(sb, (nullableMarker != null ? "?" : "") + className);
                 }
             }
             m.appendTail(sb);

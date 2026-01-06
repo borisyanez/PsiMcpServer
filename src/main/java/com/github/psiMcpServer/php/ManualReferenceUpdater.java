@@ -343,7 +343,9 @@ public class ManualReferenceUpdater {
 
                 // 1. Prefix global namespace class references with backslash
                 for (String className : globalClassesToPrefix) {
-                    String pattern = "(?<![\\\\A-Za-z0-9_])" + java.util.regex.Pattern.quote(className) + "(?![\\\\A-Za-z0-9_])";
+                    // Pattern captures optional ? for nullable types, then the class name
+                    // Group 1: optional nullable marker (?)
+                    String pattern = "(\\?)?(?<![\\\\A-Za-z0-9_])" + java.util.regex.Pattern.quote(className) + "(?![\\\\A-Za-z0-9_])";
                     java.util.regex.Pattern p = java.util.regex.Pattern.compile(pattern);
                     java.util.regex.Matcher m = p.matcher(newText);
 
@@ -372,10 +374,20 @@ public class ManualReferenceUpdater {
                         }
 
                         if (!inString && !isDeclaration) {
-                            m.appendReplacement(sb, "\\\\" + className);
+                            // Check if nullable type hint (group 1 is ?)
+                            String nullableMarker = m.group(1);
+                            if (nullableMarker != null) {
+                                // Nullable type: ?ClassName -> ?\ClassName
+                                m.appendReplacement(sb, "?\\\\" + className);
+                            } else {
+                                // Regular type: ClassName -> \ClassName
+                                m.appendReplacement(sb, "\\\\" + className);
+                            }
                             updatedCount[0]++;
                         } else {
-                            m.appendReplacement(sb, className);
+                            // Keep original (with nullable marker if present)
+                            String nullableMarker = m.group(1);
+                            m.appendReplacement(sb, (nullableMarker != null ? "?" : "") + className);
                         }
                     }
                     m.appendTail(sb);
@@ -499,14 +511,12 @@ public class ManualReferenceUpdater {
 
                 // 1. Prefix global namespace class references with backslash
                 for (String className : globalClassesToPrefix) {
-                    // Pattern to match unqualified class references
+                    // Pattern captures optional ? for nullable types, then the class name
                     // Matches: new ClassName, extends ClassName, implements ClassName,
-                    // ClassName::, : ClassName (type hints), catch (ClassName
+                    // ClassName::, : ClassName (type hints), ?ClassName (nullable), catch (ClassName
                     // But NOT: \ClassName (already qualified) or part of FQN like Namespace\ClassName
-
-                    // Match class name that is NOT preceded by \ or another identifier char
-                    // and NOT followed by \ (which would make it a namespace prefix)
-                    String pattern = "(?<![\\\\A-Za-z0-9_])" + java.util.regex.Pattern.quote(className) + "(?![\\\\A-Za-z0-9_])";
+                    // Group 1: optional nullable marker (?)
+                    String pattern = "(\\?)?(?<![\\\\A-Za-z0-9_])" + java.util.regex.Pattern.quote(className) + "(?![\\\\A-Za-z0-9_])";
                     java.util.regex.Pattern p = java.util.regex.Pattern.compile(pattern);
                     java.util.regex.Matcher m = p.matcher(newText);
 
@@ -538,10 +548,20 @@ public class ManualReferenceUpdater {
                         }
 
                         if (!inString && !isDeclaration) {
-                            m.appendReplacement(sb, "\\\\" + className);
+                            // Check if nullable type hint (group 1 is ?)
+                            String nullableMarker = m.group(1);
+                            if (nullableMarker != null) {
+                                // Nullable type: ?ClassName -> ?\ClassName
+                                m.appendReplacement(sb, "?\\\\" + className);
+                            } else {
+                                // Regular type: ClassName -> \ClassName
+                                m.appendReplacement(sb, "\\\\" + className);
+                            }
                             updatedCount[0]++;
                         } else {
-                            m.appendReplacement(sb, className);
+                            // Keep original (with nullable marker if present)
+                            String nullableMarker = m.group(1);
+                            m.appendReplacement(sb, (nullableMarker != null ? "?" : "") + className);
                         }
                     }
                     m.appendTail(sb);
