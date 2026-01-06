@@ -408,26 +408,39 @@ public class PhpBatchMoveHandler {
 
     /**
      * Get or create a subdirectory path.
+     * This method runs on EDT since it may create directories (write operation).
      */
     private PsiDirectory getOrCreateSubdirectory(PsiDirectory base, String relativePath) {
         if (relativePath == null || relativePath.isEmpty()) {
             return base;
         }
 
-        String[] parts = relativePath.split("/");
-        PsiDirectory current = base;
+        java.util.concurrent.atomic.AtomicReference<PsiDirectory> resultRef = new java.util.concurrent.atomic.AtomicReference<>();
 
-        for (String part : parts) {
-            if (part.isEmpty()) continue;
+        try {
+            ApplicationManager.getApplication().invokeAndWait(() -> {
+                com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(project, () -> {
+                    String[] parts = relativePath.split("/");
+                    PsiDirectory current = base;
 
-            PsiDirectory subDir = current.findSubdirectory(part);
-            if (subDir == null) {
-                subDir = current.createSubdirectory(part);
-            }
-            current = subDir;
+                    for (String part : parts) {
+                        if (part.isEmpty()) continue;
+
+                        PsiDirectory subDir = current.findSubdirectory(part);
+                        if (subDir == null) {
+                            subDir = current.createSubdirectory(part);
+                        }
+                        current = subDir;
+                    }
+
+                    resultRef.set(current);
+                });
+            });
+        } catch (Exception e) {
+            return base;
         }
 
-        return current;
+        return resultRef.get() != null ? resultRef.get() : base;
     }
 
     private String getFilePath(PsiFile file) {

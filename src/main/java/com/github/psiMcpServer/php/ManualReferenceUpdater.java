@@ -23,6 +23,16 @@ public class ManualReferenceUpdater {
     }
 
     /**
+     * Write content to a VirtualFile and refresh it to sync VFS with disk.
+     * This prevents "file out of sync" warnings by ensuring the VFS knows about the change.
+     */
+    private void writeAndRefresh(com.intellij.openapi.vfs.VirtualFile vFile, String content) throws java.io.IOException {
+        vFile.setBinaryContent(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        // Refresh the file synchronously to update VFS cache
+        vFile.refresh(false, false);
+    }
+
+    /**
      * Update a use statement to new namespace using text manipulation.
      * This is more reliable than PSI manipulation when multiple files are being modified.
      */
@@ -76,7 +86,7 @@ public class ManualReferenceUpdater {
                 if (matcher.find()) {
                     String newText = matcher.replaceFirst(replacement);
                     if (!newText.equals(text)) {
-                        vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        writeAndRefresh(vFile, newText);
                     }
                 }
             } catch (Exception e) {
@@ -162,7 +172,7 @@ public class ManualReferenceUpdater {
 
                 // Write changes if any
                 if (!newText.equals(text)) {
-                    vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    writeAndRefresh(vFile, newText);
                 }
 
             } catch (Exception e) {
@@ -415,7 +425,7 @@ public class ManualReferenceUpdater {
                 if (!newText.equals(text)) {
                     com.intellij.openapi.vfs.VirtualFile vFile = movedFile.getVirtualFile();
                     if (vFile != null) {
-                        vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        writeAndRefresh(vFile, newText);
                     }
                 }
             } catch (Exception e) {
@@ -558,7 +568,7 @@ public class ManualReferenceUpdater {
                     // Write directly to VirtualFile (works for newly copied files)
                     com.intellij.openapi.vfs.VirtualFile vFile = movedFile.getVirtualFile();
                     if (vFile != null) {
-                        vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        writeAndRefresh(vFile, newText);
                     }
                 }
             } catch (Exception e) {
@@ -918,7 +928,7 @@ public class ManualReferenceUpdater {
                     // Write directly to VirtualFile (works for newly copied files)
                     com.intellij.openapi.vfs.VirtualFile vFile = file.getVirtualFile();
                     if (vFile != null) {
-                        vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        writeAndRefresh(vFile, newText);
                         com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
                             .info("Updated namespace to: " + newNamespace + " in file: " + file.getName());
                     }
@@ -1128,7 +1138,7 @@ public class ManualReferenceUpdater {
 
                 // Write changes if any
                 if (!newText.equals(text)) {
-                    vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    writeAndRefresh(vFile, newText);
                 }
             } catch (Exception e) {
                 com.intellij.openapi.diagnostic.Logger.getInstance(ManualReferenceUpdater.class)
@@ -1270,7 +1280,7 @@ public class ManualReferenceUpdater {
                     newText = newText.replaceAll("\\n\\n\\n+", "\n\n");
 
                     if (!newText.equals(text)) {
-                        vFile.setBinaryContent(newText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        writeAndRefresh(vFile, newText);
                         cleaned[0] = true;
                     }
                 }

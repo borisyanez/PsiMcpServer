@@ -86,74 +86,93 @@ public class PhpMoveHandler {
         String oldNamespace = extractNamespace(oldFqn);
 
         // Determine new namespace from target directory if not provided
-        if (newNamespace == null) {
-            newNamespace = detectNamespaceFromDirectory(targetDirectory);
+        String finalNewNamespace = newNamespace;
+        if (finalNewNamespace == null) {
+            finalNewNamespace = detectNamespaceFromDirectory(targetDirectory);
         }
 
-        String newFqn = newNamespace.isEmpty() ? className : newNamespace + "\\" + className;
+        String newFqn = finalNewNamespace.isEmpty() ? className : finalNewNamespace + "\\" + className;
 
         // Stage 2: Collect all references before the move
         reportProgress(indicator, "Collecting references...", className);
         List<PsiReference> references = collectReferences(phpClass);
 
+        // Capture final variables for use in lambda
+        final String effectiveNewNamespace = finalNewNamespace;
+        final String effectiveNewFqn = newFqn;
+
+        // Use AtomicReference to capture result from EDT execution
+        java.util.concurrent.atomic.AtomicReference<MoveResult> resultRef = new java.util.concurrent.atomic.AtomicReference<>();
+
         try {
-            // Stage 3: Move the file physically
-            reportProgress(indicator, "Moving file...", className);
-            PsiFile movedFile = moveFile(phpFile, targetDirectory);
-            if (movedFile == null) {
-                return MoveResult.failure("Failed to move file to target directory");
-            }
+            // Execute all PSI modifications on EDT using invokeAndWait
+            ApplicationManager.getApplication().invokeAndWait(() -> {
+                try {
+                    // Stage 3: Move the file physically
+                    reportProgress(indicator, "Moving file...", className);
+                    PsiFile movedFile = moveFile(phpFile, targetDirectory);
+                    if (movedFile == null) {
+                        resultRef.set(MoveResult.failure("Failed to move file to target directory"));
+                        return;
+                    }
 
-            int updatedCount = 0;
+                    int updatedCount = 0;
 
-            // Stage 4: Update internal references AND namespace in a single operation
-            // Both must be done together because writing to VirtualFile doesn't update
-            // PsiFile's cached text, so subsequent reads would get stale content.
-            if (movedFile instanceof PhpFile movedPhpFile) {
-                reportProgress(indicator, "Updating file content...", className);
-                int internalUpdates = referenceUpdater.updateFileForNamespaceChange(
-                    movedPhpFile,
-                    oldNamespace,
-                    newNamespace
-                );
-                updatedCount += internalUpdates;
-            }
+                    // Stage 4: Update internal references AND namespace in a single operation
+                    // Both must be done together because writing to VirtualFile doesn't update
+                    // PsiFile's cached text, so subsequent reads would get stale content.
+                    if (movedFile instanceof PhpFile movedPhpFile) {
+                        reportProgress(indicator, "Updating file content...", className);
+                        int internalUpdates = referenceUpdater.updateFileForNamespaceChange(
+                            movedPhpFile,
+                            oldNamespace,
+                            effectiveNewNamespace
+                        );
+                        updatedCount += internalUpdates;
+                    }
 
-            // Stage 5: Update all external references (other files referencing this class)
-            reportProgress(indicator, "Updating external references...", className);
-            updatedCount += updateReferences(references, oldFqn, newFqn);
+                    // Stage 5: Update all external references (other files referencing this class)
+                    reportProgress(indicator, "Updating external references...", className);
+                    updatedCount += updateReferences(references, oldFqn, effectiveNewFqn);
 
-            // Stage 6: Update require/include statements that reference the moved file
-            reportProgress(indicator, "Updating require/include paths...", className);
-            updatedCount += updateRequireIncludePaths(sourceFile, movedFile, className);
+                    // Stage 6: Update require/include statements that reference the moved file
+                    reportProgress(indicator, "Updating require/include paths...", className);
+                    updatedCount += updateRequireIncludePaths(sourceFile, movedFile, className);
 
-            // Stage 7: Clean up duplicate use statements across the project
-            reportProgress(indicator, "Cleaning up duplicate imports...", className);
-            updatedCount += cleanupDuplicateImports(className);
+                    // Stage 7: Clean up duplicate use statements across the project
+                    reportProgress(indicator, "Cleaning up duplicate imports...", className);
+                    updatedCount += cleanupDuplicateImports(className);
 
-            // Stage 8: Apply code style fixes using PsiPhpCodeFixer if available and enabled
-            int codeStyleFixes = 0;
-            if (PsiMcpSettings.getInstance().isApplyCodeStyleFixes() && PhpCodeFixerHelper.isPluginAvailable()) {
-                reportProgress(indicator, "Applying code style fixes...", className);
-                PhpCodeFixerHelper.FixResult fixResult = PhpCodeFixerHelper.fixFile(project, movedFile);
-                if (fixResult != null && fixResult.success()) {
-                    codeStyleFixes = fixResult.fixCount();
+                    // Stage 8: Apply code style fixes using PsiPhpCodeFixer if available and enabled
+                    int codeStyleFixes = 0;
+                    if (PsiMcpSettings.getInstance().isApplyCodeStyleFixes() && PhpCodeFixerHelper.isPluginAvailable()) {
+                        reportProgress(indicator, "Applying code style fixes...", className);
+                        PhpCodeFixerHelper.FixResult fixResult = PhpCodeFixerHelper.fixFile(project, movedFile);
+                        if (fixResult != null && fixResult.success()) {
+                            codeStyleFixes = fixResult.fixCount();
+                        }
+                    }
+
+                    // Refresh VFS to sync memory with disk (prevents "file out of sync" warnings)
+                    VirtualFileManager.getInstance().syncRefresh();
+
+                    String message = "Moved " + className + " to " + effectiveNewNamespace;
+                    if (codeStyleFixes > 0) {
+                        message += " (+" + codeStyleFixes + " code style fixes)";
+                    }
+
+                    resultRef.set(MoveResult.success(
+                        message,
+                        effectiveNewFqn,
+                        updatedCount + codeStyleFixes
+                    ));
+
+                } catch (Exception e) {
+                    resultRef.set(MoveResult.failure("Move failed: " + e.getMessage()));
                 }
-            }
+            });
 
-            // Refresh VFS to sync memory with disk (prevents "file out of sync" warnings)
-            VirtualFileManager.getInstance().syncRefresh();
-
-            String message = "Moved " + className + " to " + newNamespace;
-            if (codeStyleFixes > 0) {
-                message += " (+" + codeStyleFixes + " code style fixes)";
-            }
-
-            return MoveResult.success(
-                message,
-                newFqn,
-                updatedCount + codeStyleFixes
-            );
+            return resultRef.get() != null ? resultRef.get() : MoveResult.failure("Move operation returned no result");
 
         } catch (Exception e) {
             return MoveResult.failure("Move failed: " + e.getMessage());
